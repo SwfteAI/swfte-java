@@ -4,8 +4,6 @@ import com.swfte.sdk.SwfteClient;
 import com.swfte.sdk.HttpClient;
 import com.swfte.sdk.models.Agent;
 import com.swfte.sdk.models.AgentListResponse;
-import com.swfte.sdk.models.AgentExecuteRequest;
-import com.swfte.sdk.models.AgentExecuteResponse;
 
 import java.util.HashMap;
 import java.util.List;
@@ -54,10 +52,10 @@ public class Agents {
      * Get the base URL for agent endpoints.
      */
     private String getBaseUrl() {
-        String base = client.getBaseUrl();
-        if (base.contains("/gateway")) {
-            base = base.replace("/v1/gateway", "");
-        }
+        return "/v1/agents";
+    }
+
+    private String getV2BaseUrl() {
         return "/v2/agents";
     }
     
@@ -94,8 +92,8 @@ public class Agents {
         if (client.getWorkspaceId() != null) {
             payload.put("workspaceId", client.getWorkspaceId());
         }
-        
-        return httpClient.postWithCustomBase(getBaseUrl(), payload, Agent.class);
+
+        return httpClient.postWithCustomBase(getV2BaseUrl(), payload, Agent.class);
     }
     
     /**
@@ -142,7 +140,7 @@ public class Agents {
             payload.put("active", updates.getActive());
         }
         
-        return httpClient.putWithCustomBase(getBaseUrl() + "/" + agentId, payload, Agent.class);
+        return httpClient.patchWithCustomBase(getV2BaseUrl() + "/" + agentId, payload, Agent.class);
     }
     
     /**
@@ -177,109 +175,37 @@ public class Agents {
     }
     
     /**
-     * Execute an agent.
-     *
-     * @param agentId the agent ID
-     * @param request the execute request
-     * @return the execute response
-     */
-    public AgentExecuteResponse execute(String agentId, AgentExecuteRequest request) {
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("message", request.getMessage());
-        if (request.getConversationId() != null) {
-            payload.put("conversationId", request.getConversationId());
-        }
-        if (request.getContext() != null) {
-            payload.put("context", request.getContext());
-        }
-        if (request.getStream() != null) {
-            payload.put("stream", request.getStream());
-        }
-        
-        return httpClient.postWithCustomBase(
-            getBaseUrl() + "/" + agentId + "/execute",
-            payload,
-            AgentExecuteResponse.class
-        );
-    }
-    
-    /**
-     * Verify an agent.
-     *
-     * @param agentId the agent ID
-     * @return the verified agent
-     */
-    public Agent verify(String agentId) {
-        return httpClient.postWithCustomBase(
-            getBaseUrl() + "/" + agentId + "/verify",
-            new HashMap<>(),
-            Agent.class
-        );
-    }
-    
-    /**
-     * Clone an agent.
-     *
-     * @param agentId the agent ID
-     * @param newName the new agent name
-     * @return the cloned agent
-     */
-    public Agent clone(String agentId, String newName) {
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("newName", newName);
-        
-        return httpClient.postWithCustomBase(
-            getBaseUrl() + "/" + agentId + "/clone",
-            payload,
-            Agent.class
-        );
-    }
-    
-    /**
-     * Toggle an agent's active status.
+     * Toggle an agent's active status via PATCH update.
      *
      * @param agentId the agent ID
      * @param active the new active status
      * @return the updated agent
      */
     public Agent toggleActive(String agentId, boolean active) {
-        return httpClient.postWithCustomBase(
-            getBaseUrl() + "/" + agentId + "/toggle?active=" + active,
-            new HashMap<>(),
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("active", active);
+        return httpClient.patchWithCustomBase(
+            getV2BaseUrl() + "/" + agentId,
+            payload,
             Agent.class
         );
     }
-    
+
     /**
-     * Search for agents.
+     * Associate a workflow with an agent.
      *
-     * @param query the search query
-     * @return list of matching agents
+     * @param agentId the agent ID
+     * @param workflowId the workflow ID
+     * @return the updated agent
      */
-    public List<Agent> search(String query) {
-        return search(query, 0, 20);
-    }
-    
-    /**
-     * Search for agents with pagination.
-     *
-     * @param query the search query
-     * @param page the page number
-     * @param size the page size
-     * @return list of matching agents
-     */
-    public List<Agent> search(String query, int page, int size) {
-        String url = getBaseUrl() + "/search?query=" + encodeParam(query) + "&page=" + page + "&size=" + size;
-        AgentListResponse response = httpClient.getWithCustomBase(url, AgentListResponse.class);
-        return response.getAgentList();
-    }
-    
-    private String encodeParam(String param) {
-        try {
-            return java.net.URLEncoder.encode(param, "UTF-8");
-        } catch (java.io.UnsupportedEncodingException e) {
-            return param;
-        }
+    public Agent associateWorkflow(String agentId, String workflowId) {
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("workflowId", workflowId);
+        return httpClient.postWithCustomBase(
+            getV2BaseUrl() + "/" + agentId + "/workflow",
+            payload,
+            Agent.class
+        );
     }
 }
 

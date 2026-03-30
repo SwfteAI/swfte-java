@@ -1,27 +1,14 @@
 # Swfte Java SDK
 
 [![Maven Central](https://img.shields.io/maven-central/v/com.swfte/swfte-sdk.svg)](https://search.maven.org/artifact/com.swfte/swfte-sdk)
-[![Java Version](https://img.shields.io/badge/Java-11%2B-blue.svg)](https://www.oracle.com/java/)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/swfte/agents-service/java-sdk.yml?branch=main)](https://github.com/swfte/agents-service/actions)
-[![Coverage](https://img.shields.io/codecov/c/github/swfte/agents-service)](https://codecov.io/gh/swfte/agents-service)
-[![Javadoc](https://javadoc.io/badge2/com.swfte/swfte-sdk/javadoc.svg)](https://javadoc.io/doc/com.swfte/swfte-sdk)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Java 11+](https://img.shields.io/badge/java-11+-blue.svg)](https://www.oracle.com/java/technologies/downloads/)
 
-The official Java SDK for the Swfte AI Gateway - unified access to all AI providers through a single API.
+The official Java client library for the [Swfte API](https://docs.swfte.com) -- a unified gateway to 200+ AI models from OpenAI, Anthropic, Google, and self-hosted infrastructure through a single interface.
 
-## Table of Contents
+## Documentation
 
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Features](#features)
-- [Supported Models](#supported-models)
-- [Examples](#examples)
-- [Configuration](#configuration)
-- [Error Handling](#error-handling)
-- [Requirements](#requirements)
-- [Documentation](#documentation)
-- [Contributing](#contributing)
-- [License](#license)
+Full API reference and guides are available at [docs.swfte.com](https://docs.swfte.com).
 
 ## Installation
 
@@ -35,16 +22,10 @@ The official Java SDK for the Swfte AI Gateway - unified access to all AI provid
 </dependency>
 ```
 
-### Gradle (Groovy)
+### Gradle
 
 ```groovy
 implementation 'com.swfte:swfte-sdk:1.0.0'
-```
-
-### Gradle (Kotlin)
-
-```kotlin
-implementation("com.swfte:swfte-sdk:1.0.0")
 ```
 
 ## Quick Start
@@ -57,96 +38,140 @@ import com.swfte.sdk.models.Message;
 
 import java.util.List;
 
-public class Example {
-    public static void main(String[] args) {
-        // Initialize the client
-        SwfteClient client = SwfteClient.builder()
-            .apiKey("sk-swfte-...")
-            .build();
+SwfteClient client = SwfteClient.builder()
+    .apiKey("sk-swfte-...")
+    .build();
 
-        // Create a chat completion
-        ChatResponse response = client.chat().completions().create(
-            ChatRequest.builder()
-                .model("openai:gpt-4")  // or "anthropic:claude-3-opus", "deployed:my-model"
-                .addMessage(Message.system("You are a helpful assistant."))
-                .addMessage(Message.user("Hello!"))
-                .build()
-        );
+ChatResponse response = client.chat().completions().create(
+    ChatRequest.builder()
+        .model("openai:gpt-4")
+        .messages(List.of(new Message("user", "Hello, world!")))
+        .build()
+);
 
-        System.out.println(response.getChoices().get(0).getMessage().getContent());
-    }
-}
+System.out.println(response.getChoices().get(0).getMessage().getContent());
 ```
 
-## Features
+## Usage
 
-| Feature | Description |
-|---------|-------------|
-| **Unified API** | Access OpenAI, Anthropic, Google Gemini, and self-hosted models through one API |
-| **OpenAI Compatible** | Similar interface to OpenAI SDK |
-| **Streaming Support** | Real-time streaming responses using Java Streams |
-| **Builder Pattern** | Fluent API for building requests |
-| **Java 11+** | Works with Java 11 and above |
-| **Async Support** | CompletableFuture-based async operations |
-| **Automatic Retries** | Built-in retry logic with exponential backoff |
-| **Thread-Safe** | Safe to use from multiple threads |
+### Chat Completions
 
-## Supported Models
-
-### External Providers
-
-| Provider | Models | Capabilities |
-|----------|--------|--------------|
-| **OpenAI** | `openai:gpt-4`, `openai:gpt-4-turbo`, `openai:gpt-3.5-turbo`, `openai:dall-e-3`, `openai:whisper-1`, `openai:tts-1` | Chat, Images, Audio, Embeddings |
-| **Anthropic** | `anthropic:claude-3-opus`, `anthropic:claude-3-sonnet`, `anthropic:claude-3-haiku` | Chat |
-| **Google** | `google:gemini-pro`, `google:gemini-pro-vision` | Chat, Vision |
-
-### Self-Hosted (via RunPod)
-
-| Model | Use Case |
-|-------|----------|
-| `deployed:llama-3-8b` | Text generation |
-| `deployed:sdxl` | Image generation |
-| `deployed:whisper-large` | Audio transcription |
-
-## Examples
+```java
+ChatResponse response = client.chat().completions().create(
+    ChatRequest.builder()
+        .model("anthropic:claude-3-opus")
+        .messages(List.of(
+            new Message("system", "You are a helpful assistant."),
+            new Message("user", "Explain quantum computing in one sentence.")
+        ))
+        .temperature(0.7)
+        .maxTokens(256)
+        .build()
+);
+```
 
 ### Streaming
 
 ```java
-import com.swfte.sdk.models.ChatChunk;
-
-ChatRequest request = ChatRequest.builder()
-    .model("openai:gpt-4")
-    .addMessage(Message.user("Tell me a story"))
-    .build();
-
-client.chat().completions().createStream(request)
-    .forEach(chunk -> {
-        if (chunk.getChoices().get(0).getDelta().getContent() != null) {
-            System.out.print(chunk.getChoices().get(0).getDelta().getContent());
-        }
-    });
-```
-
-### Async Operations
-
-```java
-import java.util.concurrent.CompletableFuture;
-
-CompletableFuture<ChatResponse> future = client.chat().completions().createAsync(
+Stream<String> stream = client.chat().completions().createStream(
     ChatRequest.builder()
         .model("openai:gpt-4")
-        .addMessage(Message.user("Hello!"))
+        .messages(List.of(new Message("user", "Write a short poem.")))
+        .stream(true)
         .build()
 );
 
-future.thenAccept(response -> {
-    System.out.println(response.getChoices().get(0).getMessage().getContent());
-});
+stream.forEach(chunk -> System.out.print(chunk));
 ```
 
-### Image Generation
+### Agents
+
+```java
+import com.swfte.sdk.models.Agent;
+
+// Create an agent
+Agent agent = client.agents().create(
+    Agent.builder()
+        .agentName("Research Assistant")
+        .systemPrompt("You are a research assistant specializing in AI.")
+        .provider("OPENAI")
+        .model("gpt-4")
+        .build()
+);
+
+// List agents
+List<Agent> agents = client.agents().list();
+
+// Update an agent (V2 PATCH)
+Agent updated = client.agents().update(agent.getId(),
+    Agent.builder().description("Updated description").build()
+);
+
+// Toggle active status
+client.agents().toggleActive(agent.getId(), false);
+
+// Associate a workflow
+client.agents().associateWorkflow(agent.getId(), "workflow-id");
+
+// Delete an agent
+client.agents().delete(agent.getId());
+```
+
+### Workflows
+
+```java
+import com.swfte.sdk.models.Workflow;
+import com.swfte.sdk.models.WorkflowNode;
+import com.swfte.sdk.models.WorkflowEdge;
+import com.swfte.sdk.models.WorkflowExecution;
+
+// Create a workflow
+Workflow workflow = client.workflows().create(
+    Workflow.builder()
+        .name("Content Pipeline")
+        .nodes(List.of(
+            WorkflowNode.builder().id("start").type("TRIGGER").build(),
+            WorkflowNode.builder().id("llm").type("LLM").build(),
+            WorkflowNode.builder().id("end").type("END").build()
+        ))
+        .edges(List.of(
+            new WorkflowEdge("e1", "start", "llm"),
+            new WorkflowEdge("e2", "llm", "end")
+        ))
+        .build()
+);
+
+// Execute a workflow
+WorkflowExecution execution = client.workflows().execute(
+    workflow.getId(), Map.of("input", "Hello")
+);
+
+// Wait for completion
+WorkflowExecution result = client.workflows().waitForCompletion(execution.getId());
+```
+
+### GPU Model Deployments
+
+```java
+import com.swfte.sdk.models.Deployment;
+
+// Deploy a model to GPU infrastructure
+Deployment deployment = client.deployments().create(
+    Deployment.builder()
+        .modelName("meta-llama/Llama-3.2-8B-Instruct")
+        .modelType("chat")
+        .build()
+);
+
+// Wait for deployment to be ready
+Deployment ready = client.deployments().waitForReady(deployment.getId());
+System.out.println("Endpoint: " + ready.getEndpointUrl());
+
+// Clean up
+client.deployments().delete(deployment.getId());
+```
+
+### Images
 
 ```java
 import com.swfte.sdk.models.ImageRequest;
@@ -155,12 +180,11 @@ import com.swfte.sdk.models.ImageResponse;
 ImageResponse response = client.images().generate(
     ImageRequest.builder()
         .model("openai:dall-e-3")
-        .prompt("A sunset over mountains in watercolor style")
+        .prompt("A sunset over a mountain range, oil painting style")
         .size("1024x1024")
+        .quality("hd")
         .build()
 );
-
-System.out.println(response.getData().get(0).getUrl());
 ```
 
 ### Embeddings
@@ -175,124 +199,133 @@ EmbeddingResponse response = client.embeddings().create(
         .input("The quick brown fox jumps over the lazy dog")
         .build()
 );
-
-System.out.println("Embedding dimension: " + response.getData().get(0).getEmbedding().size());
 ```
 
-### Audio Transcription
+### Audio
 
 ```java
-import java.nio.file.Files;
-import java.nio.file.Paths;
+import com.swfte.sdk.models.TranscriptionResponse;
 
-byte[] audioData = Files.readAllBytes(Paths.get("audio.mp3"));
-TranscriptionResponse result = client.audio().transcriptions().create(
-    "openai:whisper-1",
-    audioData
+// Speech to text
+byte[] audioFile = Files.readAllBytes(Path.of("recording.mp3"));
+TranscriptionResponse transcript = client.audio().transcriptions()
+    .create("openai:whisper-1", audioFile);
+
+// Text to speech
+byte[] audio = client.audio().speech()
+    .create("openai:tts-1", "Hello, welcome to Swfte.", "alloy");
+```
+
+### Secrets
+
+```java
+import com.swfte.sdk.models.Secret;
+
+// Store an API key securely
+Secret secret = client.secrets().create(
+    Secret.builder()
+        .name("my-api-key")
+        .secretType("API_KEY")
+        .value("sk-...")
+        .environment("production")
+        .build()
 );
 
-System.out.println(result.getText());
+// Validate a secret
+boolean isValid = client.secrets().validate(secret.getId());
 ```
 
-### Text-to-Speech
+### Conversations
 
 ```java
-import java.nio.file.Files;
-import java.nio.file.Paths;
+import com.swfte.sdk.models.Conversation;
+import com.swfte.sdk.models.ConversationMessage;
 
-byte[] audio = client.audio().speech().create(
-    "openai:tts-1",
-    "Hello world!",
-    "nova"
+// Create a conversation
+Conversation conversation = client.conversations().create(
+    Conversation.builder().title("Support Chat").build()
 );
 
-Files.write(Paths.get("output.mp3"), audio);
-```
+// Add messages
+client.conversations().addMessage(conversation.getId(),
+    ConversationMessage.builder().role("user").content("Hello!").build()
+);
 
-### List Models
-
-```java
-import com.swfte.sdk.models.Model;
-
-List<Model> models = client.models().list();
-for (Model model : models) {
-    System.out.println(model.getId() + " - " + model.getOwnedBy());
-}
+// Retrieve message history
+MessagePage messages = client.conversations().getMessages(conversation.getId());
 ```
 
 ## Configuration
 
 ```java
 SwfteClient client = SwfteClient.builder()
-    .apiKey("sk-swfte-...")                        // Required
-    .baseUrl("https://api.swfte.com/v1/gateway")    // Optional: custom endpoint
-    .timeout(60000)                                 // Optional: timeout in ms
-    .maxRetries(3)                                  // Optional: retry attempts
-    .workspaceId("ws-123")                          // Optional: workspace ID
+    .apiKey("sk-swfte-...")                   // Required. Also reads SWFTE_API_KEY env var.
+    .baseUrl("https://api.swfte.com/v2/gateway")  // Default
+    .timeout(60000)                            // Request timeout in ms
+    .maxRetries(3)                             // Retry count for failed requests
+    .workspaceId("ws-...")                     // Workspace scoping. Also reads SWFTE_WORKSPACE_ID.
     .build();
 ```
 
-### Environment Variables
-
-| Variable | Description |
-|----------|-------------|
-| `SWFTE_API_KEY` | Default API key |
-| `SWFTE_WORKSPACE_ID` | Default workspace ID |
-| `SWFTE_BASE_URL` | Custom API base URL |
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `apiKey` | `String` | `SWFTE_API_KEY` env | Your Swfte API key |
+| `baseUrl` | `String` | `https://api.swfte.com/v2/gateway` | API base URL |
+| `timeout` | `int` | `60000` | Request timeout (ms) |
+| `maxRetries` | `int` | `3` | Max retry attempts |
+| `workspaceId` | `String` | `SWFTE_WORKSPACE_ID` env | Workspace ID |
 
 ## Error Handling
 
 ```java
-import com.swfte.sdk.exceptions.AuthenticationException;
-import com.swfte.sdk.exceptions.RateLimitException;
-import com.swfte.sdk.exceptions.ApiException;
-import com.swfte.sdk.exceptions.SwfteException;
+import com.swfte.sdk.exceptions.*;
 
 try {
-    ChatResponse response = client.chat().completions().create(
-        ChatRequest.builder()
-            .model("openai:gpt-4")
-            .addMessage(Message.user("Hello!"))
-            .build()
-    );
+    ChatResponse response = client.chat().completions().create(request);
 } catch (AuthenticationException e) {
     System.err.println("Invalid API key");
 } catch (RateLimitException e) {
-    System.err.println("Rate limit exceeded");
+    System.err.println("Rate limit exceeded, retry later");
 } catch (ApiException e) {
-    System.err.println("API error: " + e.getMessage() + " (status: " + e.getStatusCode() + ")");
+    System.err.println("API error " + e.getStatusCode() + ": " + e.getMessage());
 } catch (SwfteException e) {
-    System.err.println("Error: " + e.getMessage());
+    System.err.println("SDK error: " + e.getMessage());
 }
 ```
 
+| Exception | Description |
+|---|---|
+| `SwfteException` | Base exception for all SDK errors |
+| `AuthenticationException` | Invalid or missing API key (HTTP 401) |
+| `RateLimitException` | Rate limit exceeded (HTTP 429) |
+| `ApiException` | General API error with status code |
+
+## Supported Providers
+
+| Provider | Models | Qualifier Prefix |
+|---|---|---|
+| OpenAI | GPT-4, GPT-4o, o1, DALL-E, Whisper, TTS | `openai:` |
+| Anthropic | Claude 3.5, Claude 3 Opus/Sonnet/Haiku | `anthropic:` |
+| Google | Gemini 2.0, Gemini 1.5 Pro/Flash | `google:` |
+| Self-hosted | Any model via RunPod/vLLM deployment | `runpod:` |
+
 ## Requirements
 
-- Java 11 or higher
+- Java 11 or later
 - Jackson 2.15+ (included as dependency)
-
-## Documentation
-
-- [API Reference](https://docs.swfte.com/java-sdk)
-- [Javadoc](https://javadoc.io/doc/com.swfte/swfte-sdk)
-- [Migration Guide](https://docs.swfte.com/java-sdk/migration)
-- [Examples](https://github.com/swfte/agents-service/tree/main/sdks/java/examples)
-- [Changelog](CHANGELOG.md)
 
 ## Contributing
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+We welcome contributions. Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines and our [Code of Conduct](CODE_OF_CONDUCT.md).
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+All contributors must sign the [Swfte CLA](https://cla.swfte.com) before their first pull request can be merged.
+
+## Security
+
+To report a vulnerability, please see [SECURITY.md](SECURITY.md). Do not open a public issue for security concerns.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
----
-
-Built with love by the [Swfte](https://swfte.com) team.
+Copyright (c) 2025 Swfte, Inc.

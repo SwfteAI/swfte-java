@@ -172,7 +172,7 @@ public class SwfteClient {
      */
     public static class Builder {
         private String apiKey;
-        private String baseUrl = "https://api.swfte.com/v1/gateway";
+        private String baseUrl = "https://api.swfte.com/v2/gateway";
         private int timeout = 60000;
         private int maxRetries = 3;
         private String workspaceId;

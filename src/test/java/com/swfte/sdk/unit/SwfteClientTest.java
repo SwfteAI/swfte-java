@@ -30,7 +30,7 @@ class SwfteClientTest {
                     .build();
 
             assertEquals(TEST_API_KEY, client.getApiKey());
-            assertEquals("https://api.swfte.com/v1/gateway", client.getBaseUrl());
+            assertEquals("https://api.swfte.com/v2/gateway", client.getBaseUrl());
             assertEquals(60000, client.getTimeout());
             assertEquals(3, client.getMaxRetries());
         }
@@ -106,7 +106,7 @@ class SwfteClientTest {
                     .apiKey(TEST_API_KEY)
                     .build();
 
-            assertEquals("https://api.swfte.com/v1/gateway", client.getBaseUrl());
+            assertEquals("https://api.swfte.com/v2/gateway", client.getBaseUrl());
             assertEquals(60000, client.getTimeout());
             assertEquals(3, client.getMaxRetries());
             assertNull(client.getWorkspaceId());

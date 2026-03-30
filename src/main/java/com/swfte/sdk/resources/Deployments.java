@@ -4,7 +4,6 @@ import com.swfte.sdk.SwfteClient;
 import com.swfte.sdk.HttpClient;
 import com.swfte.sdk.models.Deployment;
 import com.swfte.sdk.models.DeploymentListResponse;
-import com.swfte.sdk.models.DeploymentMetrics;
 
 import java.util.HashMap;
 import java.util.List;
@@ -48,11 +47,7 @@ public class Deployments {
      * Get the base URL for deployment endpoints.
      */
     private String getBaseUrl() {
-        String base = client.getBaseUrl();
-        if (base.contains("/gateway")) {
-            base = base.replace("/v1/gateway", "");
-        }
-        return "/runpod";
+        return "/v1/inference";
     }
     
     /**
@@ -79,7 +74,7 @@ public class Deployments {
             payload.put("workspaceId", client.getWorkspaceId());
         }
         
-        return httpClient.postWithCustomBase(getBaseUrl() + "/deploy", payload, Deployment.class);
+        return httpClient.postWithCustomBase(getBaseUrl() + "/models/deploy", payload, Deployment.class);
     }
     
     /**
@@ -151,7 +146,7 @@ public class Deployments {
      * @return the deployment with current status
      */
     public Deployment getStatus(String deploymentId) {
-        return httpClient.getWithCustomBase(getBaseUrl() + "/status/" + deploymentId, Deployment.class);
+        return httpClient.getWithCustomBase(getBaseUrl() + "/deployments/" + deploymentId, Deployment.class);
     }
     
     /**
@@ -211,81 +206,16 @@ public class Deployments {
     }
     
     /**
-     * Get deployment metrics.
+     * Analyze deployment logs.
      *
      * @param deploymentId the deployment ID
-     * @return the deployment metrics
+     * @return log analysis as a string
      */
-    public DeploymentMetrics getMetrics(String deploymentId) {
+    public String analyzeLogs(String deploymentId) {
         return httpClient.getWithCustomBase(
-            getBaseUrl() + "/deployments/" + deploymentId + "/metrics",
-            DeploymentMetrics.class
+            getBaseUrl() + "/deployments/" + deploymentId + "/analyze-logs",
+            String.class
         );
-    }
-    
-    /**
-     * Scale a deployment.
-     *
-     * @param deploymentId the deployment ID
-     * @param minReplicas minimum replicas
-     * @param maxReplicas maximum replicas
-     * @return the scaled deployment
-     */
-    public Deployment scale(String deploymentId, int minReplicas, int maxReplicas) {
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("minReplicas", minReplicas);
-        payload.put("maxReplicas", maxReplicas);
-        
-        return httpClient.postWithCustomBase(
-            getBaseUrl() + "/deployments/" + deploymentId + "/scale",
-            payload,
-            Deployment.class
-        );
-    }
-    
-    /**
-     * Update deployment configuration.
-     *
-     * @param deploymentId the deployment ID
-     * @param parameters new parameters
-     * @return the updated deployment
-     */
-    public Deployment updateConfig(String deploymentId, Map<String, String> parameters) {
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("parameters", parameters);
-        
-        return httpClient.putWithCustomBase(
-            getBaseUrl() + "/deployments/" + deploymentId + "/config",
-            payload,
-            Deployment.class
-        );
-    }
-    
-    /**
-     * Get deployment logs.
-     *
-     * @param deploymentId the deployment ID
-     * @return logs as a string
-     */
-    public String getLogs(String deploymentId) {
-        return getLogs(deploymentId, 100, null);
-    }
-    
-    /**
-     * Get deployment logs with options.
-     *
-     * @param deploymentId the deployment ID
-     * @param lines number of lines
-     * @param since time since (e.g., "1h", "30m")
-     * @return logs as a string
-     */
-    public String getLogs(String deploymentId, int lines, String since) {
-        StringBuilder url = new StringBuilder(getBaseUrl() + "/deployments/" + deploymentId + "/logs?lines=" + lines);
-        if (since != null) {
-            url.append("&since=").append(since);
-        }
-        
-        return httpClient.getWithCustomBase(url.toString(), String.class);
     }
     
     /**
@@ -336,21 +266,6 @@ public class Deployments {
         }
     }
     
-    /**
-     * Invoke a deployed model.
-     *
-     * @param deploymentId the deployment ID
-     * @param input the input data
-     * @return the model output
-     */
-    @SuppressWarnings("unchecked")
-    public Map<String, Object> invoke(String deploymentId, Map<String, Object> input) {
-        return httpClient.postWithCustomBase(
-            getBaseUrl() + "/deployments/" + deploymentId + "/invoke",
-            input,
-            Map.class
-        );
-    }
     
     /**
      * Check if deployment endpoint is healthy.

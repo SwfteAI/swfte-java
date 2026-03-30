@@ -65,10 +65,6 @@ public class Workflows {
      * Get the base URL for workflow endpoints.
      */
     private String getBaseUrl() {
-        String base = client.getBaseUrl();
-        if (base.contains("/gateway")) {
-            base = base.replace("/v1/gateway", "");
-        }
         return "/v2/workflows";
     }
     

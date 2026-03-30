@@ -225,18 +225,24 @@ public class HttpClient {
     
     private HttpURLConnection createConnection(String url, String method) throws IOException {
         HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
-        conn.setRequestMethod(method);
+        // HttpURLConnection doesn't natively support PATCH; use POST with X-HTTP-Method-Override
+        if ("PATCH".equals(method)) {
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("X-HTTP-Method-Override", "PATCH");
+        } else {
+            conn.setRequestMethod(method);
+        }
         conn.setDoOutput(!"GET".equals(method));
         conn.setConnectTimeout(client.getTimeout());
         conn.setReadTimeout(client.getTimeout());
         conn.setRequestProperty("Authorization", "Bearer " + client.getApiKey());
         conn.setRequestProperty("Content-Type", "application/json");
         conn.setRequestProperty("User-Agent", "swfte-java/1.0.0");
-        
+
         if (client.getWorkspaceId() != null) {
             conn.setRequestProperty("X-Workspace-ID", client.getWorkspaceId());
         }
-        
+
         return conn;
     }
     
@@ -281,7 +287,7 @@ public class HttpClient {
     private String getCustomBaseUrl() {
         String base = client.getBaseUrl();
         if (base.contains("/gateway")) {
-            base = base.replace("/v1/gateway", "");
+            base = base.replace("/v2/gateway", "").replace("/v1/gateway", "");
         }
         return base;
     }
@@ -305,6 +311,13 @@ public class HttpClient {
      */
     public <T> T putWithCustomBase(String path, Object body, Class<T> responseType) {
         return requestWithCustomBase("PUT", path, body, responseType);
+    }
+
+    /**
+     * Make a PATCH request with custom base URL.
+     */
+    public <T> T patchWithCustomBase(String path, Object body, Class<T> responseType) {
+        return requestWithCustomBase("PATCH", path, body, responseType);
     }
     
     /**
