@@ -169,6 +169,10 @@ public class ComprehensiveGatewayTest {
 
     @AfterAll
     void tearDown() throws IOException {
+        // setUp uses assumeTrue(apiKey != null) which skips initialisation
+        // when SWFTE_API_KEY is unset (typical CI). @AfterAll still fires,
+        // so guard against the unset state instead of NPE-ing.
+        if (testResultsDir == null) return;
         saveResults();
         printSummary();
     }
