@@ -7,7 +7,19 @@ import com.swfte.sdk.resources.Embeddings;
 import com.swfte.sdk.resources.Audio;
 import com.swfte.sdk.resources.Models;
 import com.swfte.sdk.resources.Agents;
+import com.swfte.sdk.resources.AgentWizard;
+import com.swfte.sdk.resources.Audit;
+import com.swfte.sdk.resources.ChatFlows;
+import com.swfte.sdk.resources.CostControl;
+import com.swfte.sdk.resources.Datasets;
 import com.swfte.sdk.resources.Deployments;
+import com.swfte.sdk.resources.Documents;
+import com.swfte.sdk.resources.Files;
+import com.swfte.sdk.resources.Marketplace;
+import com.swfte.sdk.resources.Mcp;
+import com.swfte.sdk.resources.Modules;
+import com.swfte.sdk.resources.Rag;
+import com.swfte.sdk.resources.VoiceCalls;
 import com.swfte.sdk.resources.Workflows;
 import com.swfte.sdk.resources.Secrets;
 import com.swfte.sdk.resources.Conversations;
@@ -45,18 +57,30 @@ public class SwfteClient {
     private final Audio audio;
     private final Models models;
     private final Agents agents;
+    private final AgentWizard agentWizard;
+    private final Audit audit;
+    private final ChatFlows chatflows;
+    private final CostControl costControl;
+    private final Datasets datasets;
     private final Deployments deployments;
+    private final Documents documents;
+    private final Files files;
+    private final Marketplace marketplace;
+    private final Mcp mcp;
+    private final Modules modules;
+    private final Rag rag;
+    private final VoiceCalls voiceCalls;
     private final Workflows workflows;
     private final Secrets secrets;
     private final Conversations conversations;
-    
+
     private SwfteClient(Builder builder) {
         this.apiKey = builder.apiKey;
         this.baseUrl = builder.baseUrl;
         this.timeout = builder.timeout;
         this.maxRetries = builder.maxRetries;
         this.workspaceId = builder.workspaceId;
-        
+
         // Initialize resources
         this.chat = new Chat(this);
         this.images = new Images(this);
@@ -64,7 +88,19 @@ public class SwfteClient {
         this.audio = new Audio(this);
         this.models = new Models(this);
         this.agents = new Agents(this);
+        this.agentWizard = new AgentWizard(this);
+        this.audit = new Audit(this);
+        this.chatflows = new ChatFlows(this);
+        this.costControl = new CostControl(this);
+        this.datasets = new Datasets(this);
         this.deployments = new Deployments(this);
+        this.documents = new Documents(this);
+        this.files = new Files(this);
+        this.marketplace = new Marketplace(this);
+        this.mcp = new Mcp(this);
+        this.modules = new Modules(this);
+        this.rag = new Rag(this);
+        this.voiceCalls = new VoiceCalls(this);
         this.workflows = new Workflows(this);
         this.secrets = new Secrets(this);
         this.conversations = new Conversations(this);
@@ -145,6 +181,90 @@ public class SwfteClient {
      */
     public Conversations conversations() {
         return conversations;
+    }
+
+    /**
+     * Access the Agent Wizard API ({@code /v2/agents/wizard}).
+     */
+    public AgentWizard agentWizard() {
+        return agentWizard;
+    }
+
+    /**
+     * Access the Audit API ({@code /v2/audit}).
+     */
+    public Audit audit() {
+        return audit;
+    }
+
+    /**
+     * Access the ChatFlows API ({@code /v2/chatflows}).
+     */
+    public ChatFlows chatflows() {
+        return chatflows;
+    }
+
+    /**
+     * Access the Cost Control API ({@code /v2/cost-control}).
+     */
+    public CostControl costControl() {
+        return costControl;
+    }
+
+    /**
+     * Access the Datasets API ({@code /api/v2/datasets}).
+     */
+    public Datasets datasets() {
+        return datasets;
+    }
+
+    /**
+     * Access the Documents API ({@code /api/v2/datasets/{id}/documents}).
+     */
+    public Documents documents() {
+        return documents;
+    }
+
+    /**
+     * Access the Files API ({@code /api/v2/files}).
+     */
+    public Files files() {
+        return files;
+    }
+
+    /**
+     * Access the Marketplace API ({@code /v2/marketplace}).
+     */
+    public Marketplace marketplace() {
+        return marketplace;
+    }
+
+    /**
+     * Access the MCP API ({@code /api/v2/mcp}).
+     */
+    public Mcp mcp() {
+        return mcp;
+    }
+
+    /**
+     * Access the Modules API ({@code /v2/modules}).
+     */
+    public Modules modules() {
+        return modules;
+    }
+
+    /**
+     * Access the Advanced RAG API ({@code /v2/rag}).
+     */
+    public Rag rag() {
+        return rag;
+    }
+
+    /**
+     * Access the Voice Calls API ({@code /v2/voice/calls}).
+     */
+    public VoiceCalls voiceCalls() {
+        return voiceCalls;
     }
 
     public String getApiKey() {

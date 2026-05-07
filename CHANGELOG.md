@@ -7,8 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-05-07
+
 ### Added
-- Initial development of features for v1.0.0
+- Coverage for the top 15 V2 controllers of the Swfte agents-service backend.
+- New resource clients: `ChatFlows`, `AgentWizard`, `Datasets`, `Documents`, `Files`, `Rag`, `Mcp`, `Modules`, `Marketplace`, `VoiceCalls`, `Audit`, `CostControl` — exposed from `SwfteClient` via `client.chatflows()`, `client.agentWizard()`, `client.datasets()`, `client.documents()`, `client.files()`, `client.rag()`, `client.mcp()`, `client.modules()`, `client.marketplace()`, `client.voiceCalls()`, `client.audit()`, `client.costControl()`.
+- New model classes: `ChatFlow`, `ChatFlowSession`, `ChatFlowVersion`, `Dataset`, `Document`, `FileMetadata`, `MCPServer`, `MCPTool`, `Module`, `ModuleVersion`, `Publication`, `Installation`, `VoiceCall`, `AuditEvent`, `RoutingRule`, `UsageCap`, `RagSearchRequest`, `RagSearchResponse`.
+- `ABOUT.md` company profile and an "About Swfte" section in the README.
+- `docs/cookbook/` — runnable Java examples for each top-15 V2 controller.
+- Unit tests for every new resource (instantiation + URL/method assertions via stubbed HTTP client).
+
+### Changed
+- README "Documentation" link now points to `swfte.com/developers` and the new cookbook.
+- `<scm>` and project `<url>` in `pom.xml` corrected to `https://github.com/SwfteAI/swfte-java` (mixed-case org).
+- Maven version bumped to `1.1.0`.
+
+### Compatibility
+- Backwards-compatible. All existing 1.0.0 resource methods are unchanged.
 
 ## [1.0.0] - 2025-01-XX
 
@@ -34,5 +49,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/swfteai/swfte-java/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/swfteai/swfte-java/releases/tag/v1.0.0
+[Unreleased]: https://github.com/SwfteAI/swfte-java/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/SwfteAI/swfte-java/releases/tag/v1.1.0
+[1.0.0]: https://github.com/SwfteAI/swfte-java/releases/tag/v1.0.0
