@@ -4,11 +4,35 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Java 11+](https://img.shields.io/badge/java-11+-blue.svg)](https://www.oracle.com/java/technologies/downloads/)
 
-The official Java client library for the [Swfte API](https://docs.swfte.com) -- a unified gateway to 200+ AI models from OpenAI, Anthropic, Google, and self-hosted infrastructure through a single interface.
+The official Java client library for the [Swfte API](https://www.swfte.com/developers) -- a unified gateway to 200+ AI models from OpenAI, Anthropic, Google, and self-hosted infrastructure through a single interface.
+
+## About Swfte
+
+[**Swfte**](https://www.swfte.com) is the unified AI infrastructure platform — one API for **200+ models** from OpenAI, Anthropic, Google, Mistral, Meta and self-hosted GPU deployments, plus production-grade [agents](https://www.swfte.com/products/agents), [workflows](https://www.swfte.com/products/workflows), [chatflows](https://www.swfte.com/products/chatflows), [RAG](https://www.swfte.com/products/rag), [voice](https://www.swfte.com/products/voice), and [MCP servers](https://www.swfte.com/products/mcp).
+
+Read the full company profile in [ABOUT.md](ABOUT.md), or visit [swfte.com](https://www.swfte.com) to get started for free.
+
+| Resource | Link |
+|---|---|
+| Product home | [https://www.swfte.com](https://www.swfte.com) |
+| Documentation | [swfte.com/resources](https://www.swfte.com/resources) |
+| API reference | [swfte.com/developers](https://www.swfte.com/developers) |
+| Pricing | [swfte.com/pricing](https://www.swfte.com/pricing) |
+| Security | [swfte.com/security](https://www.swfte.com/security) |
+| Status | [status.swfte.com](https://status.swfte.com) |
+| GitHub org | [github.com/SwfteAI](https://github.com/SwfteAI) |
+
+### Other official Swfte SDKs
+
+- [swfte-python](https://github.com/SwfteAI/swfte-python) — Python SDK ([PyPI](https://pypi.org/project/swfte/))
+- [swfte-node](https://github.com/SwfteAI/swfte-node) — Node.js / TypeScript SDK ([npm](https://www.npmjs.com/package/@swfte/sdk))
+- [swfte-java](https://github.com/SwfteAI/swfte-java) — Java SDK ([Maven Central](https://search.maven.org/artifact/com.swfte/swfte-sdk))
+- [swfte-chat-widget](https://github.com/SwfteAI/swfte-chat-widget) — embeddable chat widget ([npm](https://www.npmjs.com/package/@swfte/chat-widget))
+- [swfte-chatflow-widget](https://github.com/SwfteAI/swfte-chatflow-widget) — embeddable conversational form widget ([npm](https://www.npmjs.com/package/@swfte/chatflow-widget))
 
 ## Documentation
 
-Full API reference and guides are available at [docs.swfte.com](https://docs.swfte.com).
+Full API reference and guides are available at [swfte.com/developers](https://www.swfte.com/developers) and [swfte.com/resources](https://www.swfte.com/resources). For task-oriented walkthroughs of the V2 controllers covered by this SDK, see the [cookbook](docs/cookbook/).
 
 ## Installation
 
@@ -18,14 +42,14 @@ Full API reference and guides are available at [docs.swfte.com](https://docs.swf
 <dependency>
     <groupId>com.swfte</groupId>
     <artifactId>swfte-sdk</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
 </dependency>
 ```
 
 ### Gradle
 
 ```groovy
-implementation 'com.swfte:swfte-sdk:1.0.0'
+implementation 'com.swfte:swfte-sdk:1.1.0'
 ```
 
 ## Quick Start
@@ -328,4 +352,22 @@ To report a vulnerability, please see [SECURITY.md](SECURITY.md). Do not open a 
 
 This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
-Copyright (c) 2025 Swfte, Inc.
+Copyright (c) 2024-2026 Swfte, Inc.
+
+## Resources
+
+- [**swfte.com**](https://www.swfte.com) — product home for the unified AI infrastructure platform
+- [swfte.com/resources](https://www.swfte.com/resources) — guides, cookbooks, and recipes
+- [swfte.com/developers](https://www.swfte.com/developers) — full API reference
+- [swfte.com/pricing](https://www.swfte.com/pricing) — pay-as-you-go, transparent pricing
+- [swfte.com/security](https://www.swfte.com/security) — security posture and compliance
+- [status.swfte.com](https://status.swfte.com) — uptime and incident history
+- [swfte.com/products/agents](https://www.swfte.com/products/agents) · [workflows](https://www.swfte.com/products/workflows) · [chatflows](https://www.swfte.com/products/chatflows) · [RAG](https://www.swfte.com/products/rag) · [voice](https://www.swfte.com/products/voice) · [MCP](https://www.swfte.com/products/mcp)
+- [swfte.com/marketplace](https://www.swfte.com/marketplace) — module marketplace
+
+### Other official Swfte SDKs
+
+- [swfte-python](https://github.com/SwfteAI/swfte-python) — Python SDK
+- [swfte-node](https://github.com/SwfteAI/swfte-node) — Node.js / TypeScript SDK
+- [swfte-chat-widget](https://github.com/SwfteAI/swfte-chat-widget) — embeddable chat widget
+- [swfte-chatflow-widget](https://github.com/SwfteAI/swfte-chatflow-widget) — embeddable conversational form widget

@@ -6,12 +6,12 @@
 
     <groupId>com.swfte</groupId>
     <artifactId>swfte-sdk</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
     <packaging>jar</packaging>
 
     <name>Swfte Java SDK</name>
     <description>Java SDK for Swfte AI Gateway - unified access to all AI providers including OpenAI, Anthropic, Google Gemini, and more</description>
-    <url>https://github.com/swfteai/swfte-java</url>
+    <url>https://github.com/SwfteAI/swfte-java</url>
 
     <organization>
         <name>Swfte, Inc.</name>
@@ -37,9 +37,9 @@
     </developers>
 
     <scm>
-        <connection>scm:git:git://github.com/swfteai/swfte-java.git</connection>
-        <developerConnection>scm:git:ssh://github.com:swfteai/swfte-java.git</developerConnection>
-        <url>https://github.com/swfteai/swfte-java</url>
+        <connection>scm:git:git://github.com/SwfteAI/swfte-java.git</connection>
+        <developerConnection>scm:git:ssh://github.com:SwfteAI/swfte-java.git</developerConnection>
+        <url>https://github.com/SwfteAI/swfte-java</url>
         <tag>HEAD</tag>
     </scm>
 

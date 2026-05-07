@@ -224,6 +224,78 @@ class SwfteClientTest {
         }
 
         @Test
+        @DisplayName("Should have chatflows accessor (V2)")
+        void shouldHaveChatflowsAccessor() {
+            assertNotNull(client.chatflows());
+        }
+
+        @Test
+        @DisplayName("Should have agentWizard accessor (V2)")
+        void shouldHaveAgentWizardAccessor() {
+            assertNotNull(client.agentWizard());
+        }
+
+        @Test
+        @DisplayName("Should have datasets accessor (V2)")
+        void shouldHaveDatasetsAccessor() {
+            assertNotNull(client.datasets());
+        }
+
+        @Test
+        @DisplayName("Should have documents accessor (V2)")
+        void shouldHaveDocumentsAccessor() {
+            assertNotNull(client.documents());
+        }
+
+        @Test
+        @DisplayName("Should have files accessor (V2)")
+        void shouldHaveFilesAccessor() {
+            assertNotNull(client.files());
+        }
+
+        @Test
+        @DisplayName("Should have rag accessor (V2)")
+        void shouldHaveRagAccessor() {
+            assertNotNull(client.rag());
+        }
+
+        @Test
+        @DisplayName("Should have mcp accessor (V2)")
+        void shouldHaveMcpAccessor() {
+            assertNotNull(client.mcp());
+        }
+
+        @Test
+        @DisplayName("Should have modules accessor (V2)")
+        void shouldHaveModulesAccessor() {
+            assertNotNull(client.modules());
+        }
+
+        @Test
+        @DisplayName("Should have marketplace accessor (V2)")
+        void shouldHaveMarketplaceAccessor() {
+            assertNotNull(client.marketplace());
+        }
+
+        @Test
+        @DisplayName("Should have voiceCalls accessor (V2)")
+        void shouldHaveVoiceCallsAccessor() {
+            assertNotNull(client.voiceCalls());
+        }
+
+        @Test
+        @DisplayName("Should have audit accessor (V2)")
+        void shouldHaveAuditAccessor() {
+            assertNotNull(client.audit());
+        }
+
+        @Test
+        @DisplayName("Should have costControl accessor (V2)")
+        void shouldHaveCostControlAccessor() {
+            assertNotNull(client.costControl());
+        }
+
+        @Test
         @DisplayName("Resource accessors should return same instance")
         void resourceAccessorsShouldReturnSameInstance() {
             var chat1 = client.chat();
