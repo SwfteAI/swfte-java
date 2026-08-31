@@ -284,7 +284,7 @@ MessagePage messages = client.conversations().getMessages(conversation.getId());
 ```java
 SwfteClient client = SwfteClient.builder()
     .apiKey("sk-swfte-...")                   // Required. Also reads SWFTE_API_KEY env var.
-    .baseUrl("https://api.swfte.com/v2/gateway")  // Default
+    .baseUrl("https://api.swfte.com/agents/v2/gateway")  // Default
     .timeout(60000)                            // Request timeout in ms
     .maxRetries(3)                             // Retry count for failed requests
     .workspaceId("ws-...")                     // Workspace scoping. Also reads SWFTE_WORKSPACE_ID.
@@ -294,7 +294,7 @@ SwfteClient client = SwfteClient.builder()
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `apiKey` | `String` | `SWFTE_API_KEY` env | Your Swfte API key |
-| `baseUrl` | `String` | `https://api.swfte.com/v2/gateway` | API base URL |
+| `baseUrl` | `String` | `https://api.swfte.com/agents/v2/gateway` | API base URL |
 | `timeout` | `int` | `60000` | Request timeout (ms) |
 | `maxRetries` | `int` | `3` | Max retry attempts |
 | `workspaceId` | `String` | `SWFTE_WORKSPACE_ID` env | Workspace ID |
