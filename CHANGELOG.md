@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-09-01
+
+### Fixed
+
+- **The shipped default `baseUrl` returned 403.** `SwfteClient.builder().apiKey(...)`
+  could not make a request: the default pointed at
+  `https://api.swfte.com/v2/gateway`, but the gateway lives behind `/agents`, so
+  the call was refused with a bare nginx 403. Corrected to
+  `https://api.swfte.com/agents/v2/gateway` and verified live against production.
+
+### Changed
+
+- **Publishing moved from OSSRH to the Sonatype Central Portal.** The previous
+  configuration deployed to `s01.oss.sonatype.org`, which Sonatype has retired —
+  it now answers 404, so no release could ever have succeeded from it. The
+  `release` profile uses `central-publishing-maven-plugin` with
+  `autoPublish=false`, leaving a validated bundle in the Portal for a human to
+  publish, because a Maven Central coordinate cannot be recalled.
+
+
 ## [1.1.0] - 2026-05-07
 
 ### Added
