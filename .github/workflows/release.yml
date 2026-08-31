@@ -1,69 +1,198 @@
 name: Release
 
-# Tag-based releases require manual approval before any publish runs.
-# The publish job is gated by a GitHub Environment named `maven-publish-prod`
-# with required reviewers (configured under Settings → Environments).
-# Without that approval, the job pauses indefinitely and nothing reaches
-# Maven Central / OSSRH.
+# ─────────────────────────────────────────────────────────────────────────────
+# The publish contract, matching nexus-devtools and the other two SDKs:
+#
+#   1. A TAG PUSH BUILDS AND VERIFIES. It does not publish. The previous version
+#      published on tag push, with the confirmation guard applying only to
+#      manual runs, so `git push --tags` went straight at the registry.
+#
+#   2. PUBLISHING IS A DELIBERATE MANUAL ACT — the publish box ticked AND the
+#      exact version typed.
+#
+#   3. AND THEN A HUMAN STILL PRESSES PUBLISH. Maven Central coordinates are
+#      permanent in a way even npm and PyPI are not: there is no yank and no
+#      unpublish, ever. So the plugin is configured `autoPublish=false` and this
+#      workflow deposits a *validated but unpublished* bundle in the Central
+#      Portal. Releasing it is one more click, made by a person looking at it.
+#
+#   4. THE VERSION COMES FROM pom.xml, never from the tag.
+#
+# Publishing target: the Sonatype **Central Portal**, not OSSRH. The old
+# `s01.oss.sonatype.org` staging host is retired and answers 404, so the
+# previous configuration could not have deployed even with correct credentials.
+#
+# Required repository secrets (none of these exist yet — see RELEASING.md):
+#   CENTRAL_TOKEN_USERNAME / CENTRAL_TOKEN_PASSWORD  — Central Portal user token
+#   GPG_PRIVATE_KEY / GPG_PASSPHRASE                 — signing key; Central
+#                                                      rejects unsigned bundles
+# ─────────────────────────────────────────────────────────────────────────────
+
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
-      confirm:
-        description: 'Type PUBLISH to confirm an intentional release'
-        required: true
+      publish:
+        description: "Upload a bundle to the Central Portal (still needs a human to release it)"
+        type: boolean
+        default: false
+      confirm_version:
+        description: "To publish, type the exact version (e.g. 1.1.1). A mismatch aborts."
+        type: string
+        default: ""
+  push:
+    tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  guard:
+  preflight:
+    name: preflight
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
-      - name: Confirm intentional manual release
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          if [ "${{ github.event.inputs.confirm }}" != "PUBLISH" ]; then
-            echo "::error::Manual run requires confirm=PUBLISH"
-            exit 1
-          fi
-      - run: echo "Release guard passed for ${GITHUB_REF}"
-
-  publish:
-    runs-on: ubuntu-latest
-    needs: guard
-    environment:
-      name: maven-publish-prod
-      url: https://central.sonatype.com/artifact/com.swfte/swfte-sdk
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
           cache: 'maven'
-          server-id: ossrh
-          server-username: MAVEN_USERNAME
-          server-password: MAVEN_PASSWORD
+
+      - name: Resolve the version from the source tree
+        id: version
+        run: |
+          version=$(mvn -q -o -DforceStdout help:evaluate -Dexpression=project.version 2>/dev/null | tail -1)
+          if [ -z "$version" ]; then
+            version=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version | tail -1)
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "source tree declares $version"
+
+      - name: A release tag must match the source version
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          tag="${GITHUB_REF#refs/tags/v}"
+          if [ "$tag" != "$VERSION" ]; then
+            echo "::error title=Version drift::tag v$tag, pom $VERSION"
+            exit 1
+          fi
+          echo "tag v$tag matches pom"
+
+      - name: The version must not already be on Maven Central
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Central never lets a coordinate be replaced. Catch a re-used version
+          # here rather than after a bundle is already uploaded.
+          found=$(curl -s "https://search.maven.org/solrsearch/select?q=g:com.swfte+AND+a:swfte-sdk+AND+v:$VERSION&wt=json" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin).get('response',{}).get('numFound',0))" 2>/dev/null || echo 0)
+          if [ "$found" != "0" ]; then
+            echo "::error title=Already published::com.swfte:swfte-sdk:$VERSION is on Maven Central. Bump the version."
+            exit 1
+          fi
+          echo "com.swfte:swfte-sdk:$VERSION is not on Maven Central"
+
+  build:
+    name: build
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - run: mvn -B verify
+
+      - name: The built jar must carry the right default base URL
+        # This exact default shipped wrong and returned 403 for every caller who
+        # took it. Assert it against the compiled artefact, not the source.
+        run: |
+          mkdir -p /tmp/verify
+          cat > /tmp/verify/CheckDefault.java <<'JAVA'
+          import com.swfte.sdk.SwfteClient;
+          import java.lang.reflect.Field;
+          public class CheckDefault {
+            public static void main(String[] a) throws Exception {
+              Field f = SwfteClient.Builder.class.getDeclaredField("baseUrl");
+              f.setAccessible(true);
+              Object v = f.get(SwfteClient.builder());
+              String expected = "https://api.swfte.com/agents/v2/gateway";
+              if (!expected.equals(v)) {
+                System.err.println("baseUrl default is " + v + " - expected " + expected);
+                System.exit(1);
+              }
+              System.out.println("shipped default baseUrl ok: " + v);
+            }
+          }
+          JAVA
+          mvn -B -q dependency:build-classpath -Dmdep.outputFile=/tmp/cp.txt
+          CP="target/classes:$(cat /tmp/cp.txt)"
+          javac -cp "$CP" -d /tmp/verify /tmp/verify/CheckDefault.java
+          java -cp "/tmp/verify:$CP" CheckDefault
+
+  publish:
+    name: publish
+    needs: [preflight, build]
+    # Both conditions, and only on a manual run. A tag push can never reach here.
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.publish
+    runs-on: ubuntu-latest
+    environment:
+      name: maven-publish-prod
+      url: https://central.sonatype.com/artifact/com.swfte/swfte-sdk
+    permissions:
+      contents: write
+    steps:
+      - name: Confirm the publish
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+          CONFIRM: ${{ inputs.confirm_version }}
+        run: |
+          if [ "$CONFIRM" != "$VERSION" ]; then
+            echo "::error title=Publish not confirmed::typed '$CONFIRM', building '$VERSION'"
+            echo "Re-dispatch and type $VERSION into confirm_version to publish."
+            exit 1
+          fi
+          echo "confirmed $VERSION"
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'maven'
+          # `central` matches <publishingServerId> in the pom's release profile.
+          server-id: central
+          server-username: CENTRAL_USERNAME
+          server-password: CENTRAL_PASSWORD
           gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
           gpg-passphrase: GPG_PASSPHRASE
 
-      - name: Build and deploy to Maven Central
-        run: mvn deploy -B -P release -DskipTests
+      - name: Upload a signed bundle to the Central Portal
+        # Deposits a validated bundle. It is NOT released: autoPublish=false in
+        # the pom, so the last step is a person clicking publish in the Portal.
+        run: mvn -B -P release deploy -DskipTests
         env:
-          MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
-          MAVEN_PASSWORD: ${{ secrets.OSSRH_TOKEN }}
+          CENTRAL_USERNAME: ${{ secrets.CENTRAL_TOKEN_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.CENTRAL_TOKEN_PASSWORD }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+      - name: Create the GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ needs.preflight.outputs.version }}
           generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Say what still has to happen by hand
+        run: |
+          echo "::notice title=Not yet on Maven Central::A validated bundle is waiting in https://central.sonatype.com/publishing/deployments — review and press Publish."

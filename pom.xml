@@ -6,7 +6,7 @@
 
     <groupId>com.swfte</groupId>
     <artifactId>swfte-sdk</artifactId>
-    <version>1.1.0</version>
+    <version>1.1.1</version>
     <packaging>jar</packaging>
 
     <name>Swfte Java SDK</name>
@@ -43,16 +43,13 @@
         <tag>HEAD</tag>
     </scm>
 
-    <distributionManagement>
-        <snapshotRepository>
-            <id>ossrh</id>
-            <url>https://s01.oss.sonatype.org/content/repositories/snapshots</url>
-        </snapshotRepository>
-        <repository>
-            <id>ossrh</id>
-            <url>https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/</url>
-        </repository>
-    </distributionManagement>
+    <!--
+      No <distributionManagement>. Sonatype retired the OSSRH staging hosts and
+      https://s01.oss.sonatype.org now answers 404, so the previous config could
+      not have deployed. Publishing goes through the Central Portal instead,
+      driven by central-publishing-maven-plugin in the `release` profile below,
+      which takes its endpoint from the plugin rather than from here.
+    -->
 
     <properties>
         <java.version>11</java.version>
@@ -166,15 +163,24 @@
                             </execution>
                         </executions>
                     </plugin>
+                    <!--
+                      The Central Portal publisher, replacing
+                      nexus-staging-maven-plugin. `autoPublish` is deliberately
+                      false: the deployment lands in the Portal as a validated
+                      but UNPUBLISHED bundle, and a human presses publish. A
+                      Maven Central coordinate can never be recalled, so the
+                      last step stays manual — the same reasoning that keeps
+                      the workflow's publish job behind a typed confirmation.
+                    -->
                     <plugin>
-                        <groupId>org.sonatype.plugins</groupId>
-                        <artifactId>nexus-staging-maven-plugin</artifactId>
-                        <version>1.6.13</version>
+                        <groupId>org.sonatype.central</groupId>
+                        <artifactId>central-publishing-maven-plugin</artifactId>
+                        <version>0.7.0</version>
                         <extensions>true</extensions>
                         <configuration>
-                            <serverId>ossrh</serverId>
-                            <nexusUrl>https://s01.oss.sonatype.org/</nexusUrl>
-                            <autoReleaseAfterClose>true</autoReleaseAfterClose>
+                            <publishingServerId>central</publishingServerId>
+                            <autoPublish>false</autoPublish>
+                            <waitUntil>validated</waitUntil>
                         </configuration>
                     </plugin>
                 </plugins>
