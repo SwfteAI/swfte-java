@@ -92,7 +92,7 @@ public class Modules {
      * wants to subscribe to a Server-Sent-Events stream of build progress.
      */
     public String buildProgressUrl(String moduleId) {
-        return client.getBaseUrl().replaceAll("/v[12]/gateway$", "")
+        return client.getApiBaseUrl()
             + base() + "/" + moduleId + "/build/progress";
     }
 

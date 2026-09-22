@@ -7,7 +7,14 @@ import com.swfte.sdk.models.WorkflowNode;
 import com.swfte.sdk.models.WorkflowEdge;
 import com.swfte.sdk.models.WorkflowExecution;
 import com.swfte.sdk.models.WorkflowListResponse;
+import com.swfte.sdk.models.WorkflowInvocation;
+import com.swfte.sdk.exceptions.ApiException;
+import com.swfte.sdk.exceptions.SwfteException;
+import com.swfte.sdk.exceptions.WorkflowExecutionException;
+import com.swfte.sdk.exceptions.WorkflowTimeoutException;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -42,13 +49,15 @@ import java.util.Map;
  *         .build()
  * );
  * 
- * // Execute the workflow
+ * // Production: run the PUBLISHED version and wait for it
  * Map<String, Object> inputs = new HashMap<>();
  * inputs.put("message", "Hello!");
+ * WorkflowExecution result = client.workflows().invokeAndWait(workflow.getId(), inputs);
+ * System.out.println(result.getStatusRaw() + " " + result.getOutputs());
+ *
+ * // Test run of the current (draft) definition
  * WorkflowExecution execution = client.workflows().execute(workflow.getId(), inputs);
- * 
- * // Wait for completion
- * WorkflowExecution result = client.workflows().waitForCompletion(execution.getId());
+ * WorkflowExecution done = client.workflows().waitForCompletion(execution.getExecutionId());
  * }</pre>
  */
 public class Workflows {
@@ -192,7 +201,12 @@ public class Workflows {
     }
     
     /**
-     * Execute a workflow.
+     * Run the workflow's CURRENT (editable/draft) definition — Studio's test path.
+     *
+     * <p>{@code POST /v2/workflows/{id}/execute}. The server refuses (409
+     * {@code WORKFLOW_NOT_PUBLISHED}) a workflow that was never published unless
+     * the inputs carry {@code testingFlag: true}. Production callers should use
+     * {@link #invoke(String, Map)}, which runs the published snapshot.</p>
      *
      * @param workflowId the workflow ID
      * @param inputs the workflow inputs
@@ -219,18 +233,135 @@ public class Workflows {
     }
     
     /**
+     * Run the workflow's PUBLISHED snapshot — the production path.
+     *
+     * <p>{@code POST /v2/workflows/{id}/invoke} with the inputs as the JSON body. The
+     * server answers 202 with an {@code executionId} once the run is queued. A
+     * never-published workflow answers 409 ({@code PUBLISHED_SNAPSHOT_UNAVAILABLE}),
+     * thrown as {@link ApiException} with status 409; {@code testingFlag} is rejected (400).
+     * Not retried: a retry could start the run twice.</p>
+     *
+     * @param workflowId the workflow ID
+     * @param inputs the workflow inputs ({@code null} sends {@code {}})
+     * @return the accepted invocation, carrying the execution ID
+     */
+    @SuppressWarnings("unchecked")
+    public WorkflowInvocation invoke(String workflowId, Map<String, Object> inputs) {
+        if (workflowId == null || workflowId.isEmpty()) {
+            throw new SwfteException("workflowId is required");
+        }
+        Map<String, Object> res = httpClient.apiRequest(
+            "POST",
+            getBaseUrl() + "/" + encode(workflowId) + "/invoke",
+            inputs != null ? inputs : new HashMap<>(),
+            Map.class
+        );
+        Object executionId = res == null ? null : res.get("executionId");
+        if (executionId == null || String.valueOf(executionId).isEmpty()) {
+            throw new ApiException("Invoke response did not include an executionId", 502, String.valueOf(res));
+        }
+        Object wf = res.get("workflowId");
+        Object status = res.get("status");
+        return new WorkflowInvocation(
+            String.valueOf(executionId),
+            wf == null ? null : String.valueOf(wf),
+            status == null ? null : String.valueOf(status),
+            res
+        );
+    }
+
+    /**
+     * Invoke the published workflow and poll until it finishes (5 min timeout, 2 s interval).
+     *
+     * @see #invokeAndWait(String, Map, long, long)
+     */
+    public WorkflowExecution invokeAndWait(String workflowId, Map<String, Object> inputs) {
+        return invokeAndWait(workflowId, inputs, 300000, 2000);
+    }
+
+    /**
+     * Invoke the published workflow and poll until the run reaches a terminal status.
+     *
+     * @param workflowId the workflow ID
+     * @param inputs the workflow inputs
+     * @param timeoutMs give up after this long (client side; the run keeps going)
+     * @param pollIntervalMs delay between status polls
+     * @return the final execution when it succeeded ({@code SUCCESS}, {@code SUCCEEDED} or {@code COMPLETED})
+     * @throws WorkflowExecutionException the run ended FAILED/TIMEOUT or CANCELLED/CANCELED
+     * @throws WorkflowTimeoutException {@code timeoutMs} elapsed first; the run is not cancelled
+     */
+    public WorkflowExecution invokeAndWait(String workflowId, Map<String, Object> inputs, long timeoutMs, long pollIntervalMs) {
+        WorkflowInvocation invocation = invoke(workflowId, inputs);
+        return pollUntilTerminal(invocation.getExecutionId(), timeoutMs, pollIntervalMs);
+    }
+
+    /**
      * Get execution status.
+     *
+     * <p>{@code GET /v2/workflows/executions/{executionId}/status}. The nested
+     * {@code execution} record is lifted; see {@link WorkflowExecution#fromStatusResponse}.</p>
      *
      * @param executionId the execution ID
      * @return the workflow execution
      */
+    @SuppressWarnings("unchecked")
     public WorkflowExecution getExecutionStatus(String executionId) {
-        return httpClient.getWithCustomBase(
-            getBaseUrl() + "/executions/" + executionId + "/status",
-            WorkflowExecution.class
+        if (executionId == null || executionId.isEmpty()) {
+            throw new SwfteException("executionId is required");
+        }
+        Map<String, Object> body = httpClient.apiRequest(
+            "GET",
+            getBaseUrl() + "/executions/" + encode(executionId) + "/status",
+            null,
+            Map.class
         );
+        return WorkflowExecution.fromStatusResponse(executionId, body);
     }
-    
+
+    private WorkflowExecution pollUntilTerminal(String executionId, long timeoutMs, long pollIntervalMs) {
+        long deadline = System.nanoTime() + Math.max(0, timeoutMs) * 1_000_000L;
+        long interval = Math.max(0, pollIntervalMs);
+        while (true) { // always polls at least once, even with timeoutMs = 0
+            WorkflowExecution execution = getExecutionStatus(executionId);
+            String status = execution.getStatusRaw();
+            switch (execution.getOutcome()) {
+                case SUCCEEDED:
+                    return execution;
+                case FAILED:
+                    throw new WorkflowExecutionException(
+                        "Execution " + executionId + " " + status.toLowerCase(java.util.Locale.ROOT)
+                            + (execution.getError() != null ? ": " + execution.getError() : ""),
+                        executionId, status, execution);
+                case CANCELLED:
+                    throw new WorkflowExecutionException(
+                        "Execution " + executionId + " was cancelled", executionId, status, execution);
+                default:
+                    break;
+            }
+            long remainingMs = (deadline - System.nanoTime()) / 1_000_000L;
+            if (remainingMs <= 0) {
+                throw new WorkflowTimeoutException(
+                    "Execution " + executionId + " did not complete within " + timeoutMs + "ms (last status "
+                        + (status.isEmpty() ? "unknown" : status) + ")",
+                    executionId, execution);
+            }
+            try {
+                Thread.sleep(Math.min(interval, remainingMs));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new SwfteException("Interrupted while waiting for execution " + executionId, e);
+            }
+        }
+    }
+
+    private static String encode(String segment) {
+        try {
+            return URLEncoder.encode(segment, StandardCharsets.UTF_8.name()).replace("+", "%20");
+        } catch (java.io.UnsupportedEncodingException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     /**
      * Pause a running execution.
      *
@@ -289,42 +420,20 @@ public class Workflows {
     }
     
     /**
-     * Wait for a workflow execution to complete with custom timeout.
+     * Wait for an existing execution (from {@link #execute} or {@link #invoke}) to finish.
+     * Same terminal rules as {@link #invokeAndWait(String, Map, long, long)}.
      *
      * @param executionId the execution ID
      * @param timeoutMs timeout in milliseconds
      * @param pollIntervalMs poll interval in milliseconds
      * @return the completed execution
-     * @throws RuntimeException if timeout or execution fails
+     * @throws WorkflowExecutionException if the execution fails or is cancelled
+     * @throws WorkflowTimeoutException if it does not finish within {@code timeoutMs}
      */
     public WorkflowExecution waitForCompletion(String executionId, long timeoutMs, long pollIntervalMs) {
-        long startTime = System.currentTimeMillis();
-        
-        while (true) {
-            long elapsed = System.currentTimeMillis() - startTime;
-            if (elapsed > timeoutMs) {
-                throw new RuntimeException("Execution " + executionId + " did not complete within " + timeoutMs + "ms");
-            }
-            
-            WorkflowExecution execution = getExecutionStatus(executionId);
-            
-            if (execution.getStatus() == WorkflowExecution.Status.COMPLETED) {
-                return execution;
-            } else if (execution.getStatus() == WorkflowExecution.Status.FAILED) {
-                throw new RuntimeException("Execution " + executionId + " failed: " + execution.getError());
-            } else if (execution.getStatus() == WorkflowExecution.Status.CANCELLED) {
-                throw new RuntimeException("Execution " + executionId + " was cancelled");
-            }
-            
-            try {
-                Thread.sleep(pollIntervalMs);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new RuntimeException("Interrupted while waiting for execution", e);
-            }
-        }
+        return pollUntilTerminal(executionId, timeoutMs, pollIntervalMs);
     }
-    
+
     /**
      * Clone a workflow.
      *

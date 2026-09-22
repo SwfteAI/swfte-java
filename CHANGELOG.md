@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `agents().chat(agentId, message[, AgentChatOptions])` —
+  `POST /v1/agents/{agentId}/chat/{userId}` with `{"message", "conversationId"?}`.
+  Returns `AgentChatResponse` (`getResponse()`, normalised from `content` when the
+  server uses that key; `getConversationId()`; `getRaw()`). `userId` defaults to
+  `"sdk-user"` (`AgentChatOptions.DEFAULT_USER_ID`).
+- `workflows().invoke(workflowId, inputs)` — `POST /v2/workflows/{id}/invoke`,
+  runs the published snapshot; returns `WorkflowInvocation` with the execution ID.
+- `workflows().invokeAndWait(workflowId, inputs[, timeoutMs, pollIntervalMs])` —
+  invokes and polls to a terminal status. Success is any of `SUCCESS`,
+  `SUCCEEDED`, `COMPLETED`; `FAILED`/`TIMEOUT`/`CANCELLED`/`CANCELED` throw
+  `WorkflowExecutionException`; the deadline throws `WorkflowTimeoutException`.
+- `catalog().search(CatalogSearchParams)`, `catalog().get(kind, id)`,
+  `catalog().contract(kind, id)` over `/v2/catalog/*`, with typed
+  `CatalogSearchResponse`, `CatalogEntry` and `CatalogContract`.
+- `Builder.apiBaseUrl(...)` (and `SWFTE_API_BASE_URL`) for the agents-service root;
+  defaults to `baseUrl` minus its trailing gateway segment, which is what the
+  management resources already computed. `SwfteClient.getApiBaseUrl()`.
+- `HttpClient.apiRequest(...)`: single attempt, fixed-length body (so
+  `HttpURLConnection` cannot silently re-send a POST), 401/403 ->
+  `AuthenticationException`, 429 -> `RateLimitException`, else `ApiException`
+  with `getResponseBody()`.
+
+### Changed
+
+- `workflows().getExecutionStatus()` parses the server's
+  `{"execution": {...}, "nodeExecutions": [...], "progress": n}` shape. It used to
+  bind the top level directly, so `getStatus()` was always `null` (and a
+  `SUCCESS` status would not have parsed into the enum anyway).
+  `WorkflowExecution.Status` gains `SUCCESS`, `SUCCEEDED`, `TIMEOUT`, `CANCELED`;
+  new `getStatusRaw()`, `getOutcome()`, `isTerminal()`, `isSucceeded()`,
+  `getNodeExecutions()`, `getRaw()`.
+- `workflows().waitForCompletion(...)` shares the new terminal rules (it only
+  knew `COMPLETED`, so it timed out on every successful run) and throws the new
+  exceptions, both `RuntimeException`s as before.
+
+### Fixed
+
+- `SwfteClientTest` asserted the pre-1.1.1 default URL.
+
 ## [1.1.1] - 2026-09-01
 
 ### Fixed

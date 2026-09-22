@@ -4,7 +4,12 @@ import com.swfte.sdk.SwfteClient;
 import com.swfte.sdk.HttpClient;
 import com.swfte.sdk.models.Agent;
 import com.swfte.sdk.models.AgentListResponse;
+import com.swfte.sdk.models.AgentChatOptions;
+import com.swfte.sdk.models.AgentChatResponse;
+import com.swfte.sdk.exceptions.SwfteException;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -29,13 +34,9 @@ import java.util.Map;
  *         .build()
  * );
  * 
- * // Execute the agent
- * AgentExecuteResponse response = client.agents().execute(
- *     agent.getId(),
- *     AgentExecuteRequest.builder()
- *         .message("Hello!")
- *         .build()
- * );
+ * // Chat with it (reply text is getResponse())
+ * AgentChatResponse reply = client.agents().chat(
+ *     agent.getId(), "Hello!", AgentChatOptions.builder().userId("user-42").build());
  * }</pre>
  */
 public class Agents {
@@ -207,11 +208,60 @@ public class Agents {
             Agent.class
         );
     }
+
+    /**
+     * Send one message to an agent as {@link AgentChatOptions#DEFAULT_USER_ID} ("sdk-user").
+     *
+     * @see #chat(String, String, AgentChatOptions)
+     */
+    public AgentChatResponse chat(String agentId, String message) {
+        return chat(agentId, message, AgentChatOptions.builder().build());
+    }
+
+    /**
+     * Send one message to an agent and return its reply.
+     *
+     * <p>{@code POST {apiBaseUrl}/v1/agents/{agentId}/chat/{userId}} with body
+     * {@code {"message": ..., "conversationId": ...}}. Runs the agent's full
+     * configuration (tools, knowledge, memory) and keeps history per
+     * (agent, userId). Not retried: a retry would send the message twice.</p>
+     *
+     * @param agentId the agent to talk to
+     * @param message the user's message
+     * @param options userId (default "sdk-user") and conversationId; may be {@code null}
+     * @return the reply; {@link AgentChatResponse#getResponse()} is the text
+     * @throws com.swfte.sdk.exceptions.AuthenticationException on 401/403
+     * @throws com.swfte.sdk.exceptions.RateLimitException on 429
+     * @throws com.swfte.sdk.exceptions.ApiException on any other non-2xx
+     */
+    @SuppressWarnings("unchecked")
+    public AgentChatResponse chat(String agentId, String message, AgentChatOptions options) {
+        if (agentId == null || agentId.isEmpty()) {
+            throw new SwfteException("agentId is required");
+        }
+        if (message == null || message.isEmpty()) {
+            throw new SwfteException("message must be a non-empty string");
+        }
+        AgentChatOptions opts = options != null ? options : AgentChatOptions.builder().build();
+        Map<String, Object> body = new HashMap<>();
+        body.put("message", message);
+        if (opts.getConversationId() != null && !opts.getConversationId().isEmpty()) {
+            body.put("conversationId", opts.getConversationId());
+        }
+        Map<String, Object> raw = httpClient.apiRequest(
+            "POST",
+            getBaseUrl() + "/" + encode(agentId) + "/chat/" + encode(opts.getUserId()),
+            body,
+            Map.class
+        );
+        return AgentChatResponse.fromMap(raw);
+    }
+
+    private static String encode(String segment) {
+        try {
+            return URLEncoder.encode(segment, StandardCharsets.UTF_8.name()).replace("+", "%20");
+        } catch (java.io.UnsupportedEncodingException e) {
+            throw new IllegalStateException(e);
+        }
+    }
 }
-
-
-
-
-
-
-

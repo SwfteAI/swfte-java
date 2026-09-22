@@ -112,6 +112,8 @@ stream.forEach(chunk -> System.out.print(chunk));
 
 ```java
 import com.swfte.sdk.models.Agent;
+import com.swfte.sdk.models.AgentChatOptions;
+import com.swfte.sdk.models.AgentChatResponse;
 
 // Create an agent
 Agent agent = client.agents().create(
@@ -137,6 +139,15 @@ client.agents().toggleActive(agent.getId(), false);
 // Associate a workflow
 client.agents().associateWorkflow(agent.getId(), "workflow-id");
 
+// Chat with an agent: POST /v1/agents/{id}/chat/{userId}, reply text in getResponse()
+AgentChatResponse reply = client.agents().chat(agent.getId(), "What changed in Q3?",
+    AgentChatOptions.builder().userId("user-42").build());
+System.out.println(reply.getResponse());
+
+// Continue the same conversation (userId defaults to "sdk-user" when not set)
+AgentChatResponse followUp = client.agents().chat(agent.getId(), "And Q4?",
+    AgentChatOptions.builder().userId("user-42").conversationId(reply.getConversationId()).build());
+
 // Delete an agent
 client.agents().delete(agent.getId());
 ```
@@ -148,6 +159,9 @@ import com.swfte.sdk.models.Workflow;
 import com.swfte.sdk.models.WorkflowNode;
 import com.swfte.sdk.models.WorkflowEdge;
 import com.swfte.sdk.models.WorkflowExecution;
+import com.swfte.sdk.models.WorkflowInvocation;
+import com.swfte.sdk.exceptions.WorkflowExecutionException;
+import com.swfte.sdk.exceptions.WorkflowTimeoutException;
 
 // Create a workflow
 Workflow workflow = client.workflows().create(
@@ -165,13 +179,58 @@ Workflow workflow = client.workflows().create(
         .build()
 );
 
-// Execute a workflow
-WorkflowExecution execution = client.workflows().execute(
-    workflow.getId(), Map.of("input", "Hello")
-);
+// Production: run the PUBLISHED version (POST /v2/workflows/{id}/invoke, 202 + executionId)
+WorkflowInvocation invocation = client.workflows().invoke(workflow.getId(), Map.of("input", "Hello"));
+WorkflowExecution status = client.workflows().getExecutionStatus(invocation.getExecutionId());
+System.out.println(status.getStatusRaw() + " " + status.getProgress());
 
-// Wait for completion
-WorkflowExecution result = client.workflows().waitForCompletion(execution.getId());
+// ...or invoke and poll until the run finishes (timeout and poll interval in ms)
+try {
+    WorkflowExecution done = client.workflows().invokeAndWait(
+        workflow.getId(), Map.of("input", "Hello"), 120_000, 2_000);
+    System.out.println(done.getStatusRaw() + " " + done.getOutputs()); // SUCCESS / SUCCEEDED / COMPLETED
+} catch (WorkflowExecutionException e) {   // FAILED, TIMEOUT, CANCELLED/CANCELED
+    System.err.println("run ended " + e.getStatus() + ": " + e.getMessage());
+} catch (WorkflowTimeoutException e) {     // gave up polling; the run continues
+    System.err.println("still running " + e.getExecutionId());
+}
+
+// Test run of the current (unpublished) definition — Studio's draft path
+WorkflowExecution execution = client.workflows().execute(
+    workflow.getId(), Map.of("input", "Hello", "testingFlag", true)
+);
+WorkflowExecution result = client.workflows().waitForCompletion(execution.getExecutionId());
+```
+
+`invoke()` runs the published snapshot and is what production callers should use;
+unpublished edits do not affect it, and a never-published workflow answers 409.
+`execute()` runs the editable definition (the draft) and exists for test runs.
+`invoke()` is never retried, so a network blip never starts a run twice.
+
+### Catalog
+
+```java
+import com.swfte.sdk.models.CatalogContract;
+import com.swfte.sdk.models.CatalogEntry;
+import com.swfte.sdk.models.CatalogSearchParams;
+import com.swfte.sdk.models.CatalogSearchResponse;
+
+// Find proven artifacts across kinds
+CatalogSearchResponse page = client.catalog().search(CatalogSearchParams.builder()
+    .q("invoice triage")
+    .kinds("workflow", "agent")
+    .scope("all")
+    .minEvidence("corroborated")
+    .limit(10)
+    .build());
+
+// Evidence, reviews and dependencies for one entry
+CatalogEntry detail = client.catalog().get("workflow", page.getItems().get(0).getId());
+System.out.println(detail.getEvidence().getLevel() + " " + detail.getEvidence().getReasons());
+
+// How to call it: method, path, input/output JSON Schema and code snippets
+CatalogContract contract = client.catalog().contract("workflow", page.getItems().get(0).getId());
+System.out.println(contract.getInvoke().getMethod() + " " + contract.getInvoke().getPath());
 ```
 
 ### GPU Model Deployments
@@ -288,13 +347,15 @@ SwfteClient client = SwfteClient.builder()
     .timeout(60000)                            // Request timeout in ms
     .maxRetries(3)                             // Retry count for failed requests
     .workspaceId("ws-...")                     // Workspace scoping. Also reads SWFTE_WORKSPACE_ID.
+    // .apiBaseUrl("https://api.swfte.com/agents")  // Optional; derived from baseUrl
     .build();
 ```
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `apiKey` | `String` | `SWFTE_API_KEY` env | Your Swfte API key |
-| `baseUrl` | `String` | `https://api.swfte.com/agents/v2/gateway` | API base URL |
+| `apiKey` | `String` | `SWFTE_API_KEY` env | Your Swfte API key (`sk-swfte-...`) or personal access token (`pat_...`) |
+| `baseUrl` | `String` | `https://api.swfte.com/agents/v2/gateway` | Gateway URL (chat completions, images, embeddings, audio, models) |
+| `apiBaseUrl` | `String` | `SWFTE_API_BASE_URL` env, else `baseUrl` minus `/v1/gateway` or `/v2/gateway` | agents-service root used by agents, workflows, catalog and the other management resources |
 | `timeout` | `int` | `60000` | Request timeout (ms) |
 | `maxRetries` | `int` | `3` | Max retry attempts |
 | `workspaceId` | `String` | `SWFTE_WORKSPACE_ID` env | Workspace ID |
@@ -322,7 +383,12 @@ try {
 | `SwfteException` | Base exception for all SDK errors |
 | `AuthenticationException` | Invalid or missing API key (HTTP 401) |
 | `RateLimitException` | Rate limit exceeded (HTTP 429) |
-| `ApiException` | General API error with status code |
+| `ApiException` | General API error with status code (and `getResponseBody()` from `agents().chat`, `workflows().invoke*`, `getExecutionStatus`, `catalog()`) |
+| `WorkflowExecutionException` | `invokeAndWait` / `waitForCompletion`: the run ended FAILED, TIMEOUT or CANCELLED/CANCELED |
+| `WorkflowTimeoutException` | `invokeAndWait` / `waitForCompletion`: gave up polling; the run is not cancelled |
+
+`agents().chat`, `workflows().invoke*`, `getExecutionStatus` and `catalog()` map 401/403
+to `AuthenticationException` and 429 to `RateLimitException`, and are never retried.
 
 ## Supported Providers
 

@@ -34,14 +34,33 @@ public final class TestServer implements AutoCloseable {
         }
     }
 
+    /** A canned response: HTTP status + JSON body. */
+    public static final class Response {
+        public final int status;
+        public final String body;
+
+        public Response(int status, String body) {
+            this.status = status;
+            this.body = body;
+        }
+    }
+
     private final HttpServer server;
     private final List<Recorded> recorded = new ArrayList<>();
     private final int port;
 
     public TestServer(String responseJson) throws IOException {
+        this(new Response(200, responseJson));
+    }
+
+    /**
+     * Answer successive requests with {@code responses} in order; the last one
+     * repeats once the list is exhausted.
+     */
+    public TestServer(Response... responses) throws IOException {
         this.server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         this.port = server.getAddress().getPort();
-        server.createContext("/", new Handler(responseJson, recorded));
+        server.createContext("/", new Handler(responses, recorded));
         server.start();
     }
 
@@ -63,11 +82,11 @@ public final class TestServer implements AutoCloseable {
     }
 
     private static final class Handler implements HttpHandler {
-        private final String responseJson;
+        private final Response[] responses;
         private final List<Recorded> recorded;
 
-        Handler(String responseJson, List<Recorded> recorded) {
-            this.responseJson = responseJson == null ? "{}" : responseJson;
+        Handler(Response[] responses, List<Recorded> recorded) {
+            this.responses = responses;
             this.recorded = recorded;
         }
 
@@ -86,11 +105,16 @@ public final class TestServer implements AutoCloseable {
             String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             String auth = exchange.getRequestHeaders().getFirst("Authorization");
             String workspace = exchange.getRequestHeaders().getFirst("X-Workspace-ID");
-            recorded.add(new Recorded(method, path, body, auth, workspace));
+            Response response;
+            synchronized (recorded) {
+                recorded.add(new Recorded(method, path, body, auth, workspace));
+                response = responses[Math.min(recorded.size(), responses.length) - 1];
+            }
 
-            byte[] payload = responseJson.getBytes(StandardCharsets.UTF_8);
+            String json = response.body == null ? "{}" : response.body;
+            byte[] payload = json.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/json");
-            exchange.sendResponseHeaders(200, payload.length);
+            exchange.sendResponseHeaders(response.status, payload.length);
             try (OutputStream out = exchange.getResponseBody()) {
                 out.write(payload);
             }

@@ -277,6 +277,71 @@ public class HttpClient {
         return "";
     }
     
+    /**
+     * One request against the agents-service API ({@link SwfteClient#getApiBaseUrl()}).
+     *
+     * <p>Never retried: it backs non-idempotent calls such as agent chat and
+     * workflow invoke, where a silent retry could run (and bill) twice. Bodies
+     * are sent in fixed-length streaming mode, which also stops
+     * {@link HttpURLConnection} from transparently re-sending a POST.</p>
+     *
+     * <p>Errors: 401/403 {@link AuthenticationException}, 429 {@link RateLimitException},
+     * any other non-2xx {@link ApiException} (status code and raw body).</p>
+     *
+     * @param path path (and query) relative to the API root, starting with {@code /}
+     * @return the parsed body, or {@code null} for an empty body
+     */
+    public <T> T apiRequest(String method, String path, Object body, Class<T> responseType) {
+        String url = client.getApiBaseUrl() + path;
+        HttpURLConnection conn = null;
+        try {
+            conn = createConnection(url, method);
+            if (body != null && !"GET".equals(method) && !"DELETE".equals(method)) {
+                byte[] bytes = objectMapper.writeValueAsBytes(body);
+                conn.setDoOutput(true);
+                conn.setFixedLengthStreamingMode(bytes.length);
+                try (OutputStream os = conn.getOutputStream()) {
+                    os.write(bytes);
+                }
+            } else {
+                conn.setDoOutput(false);
+            }
+
+            int code = conn.getResponseCode();
+            if (code < 200 || code >= 300) {
+                String errorBody = readErrorStream(conn);
+                String message = "API error: " + code + " " + method + " " + path
+                    + (errorBody.isEmpty() ? "" : " - " + errorBody);
+                if (code == 401 || code == 403) {
+                    throw new AuthenticationException(message);
+                }
+                if (code == 429) {
+                    throw new RateLimitException(message);
+                }
+                throw new ApiException(message, code, errorBody);
+            }
+
+            String text = code == 204 ? "" : readResponseStream(conn);
+            if (text == null || text.isEmpty() || responseType == Void.class) {
+                return null;
+            }
+            if (responseType == String.class) {
+                return responseType.cast(text);
+            }
+            return objectMapper.readValue(text, responseType);
+        } catch (SwfteException e) {
+            throw e;
+        } catch (java.net.SocketTimeoutException e) {
+            throw new SwfteException("Request timed out: " + method + " " + path, e);
+        } catch (IOException e) {
+            throw new SwfteException("Request failed: " + method + " " + path, e);
+        } finally {
+            if (conn != null) {
+                conn.disconnect();
+            }
+        }
+    }
+
     public ObjectMapper getObjectMapper() {
         return objectMapper;
     }
@@ -285,11 +350,7 @@ public class HttpClient {
      * Get the custom base URL (without the gateway path).
      */
     private String getCustomBaseUrl() {
-        String base = client.getBaseUrl();
-        if (base.contains("/gateway")) {
-            base = base.replace("/v2/gateway", "").replace("/v1/gateway", "");
-        }
-        return base;
+        return client.getApiBaseUrl();
     }
     
     /**

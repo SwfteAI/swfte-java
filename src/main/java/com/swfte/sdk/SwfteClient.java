@@ -23,6 +23,7 @@ import com.swfte.sdk.resources.VoiceCalls;
 import com.swfte.sdk.resources.Workflows;
 import com.swfte.sdk.resources.Secrets;
 import com.swfte.sdk.resources.Conversations;
+import com.swfte.sdk.resources.Catalog;
 
 /**
  * Swfte API client for accessing AI models through the unified gateway.
@@ -47,6 +48,7 @@ public class SwfteClient {
     
     private final String apiKey;
     private final String baseUrl;
+    private final String apiBaseUrl;
     private final int timeout;
     private final int maxRetries;
     private final String workspaceId;
@@ -73,10 +75,12 @@ public class SwfteClient {
     private final Workflows workflows;
     private final Secrets secrets;
     private final Conversations conversations;
+    private final Catalog catalog;
 
     private SwfteClient(Builder builder) {
         this.apiKey = builder.apiKey;
         this.baseUrl = builder.baseUrl;
+        this.apiBaseUrl = builder.resolveApiBaseUrl();
         this.timeout = builder.timeout;
         this.maxRetries = builder.maxRetries;
         this.workspaceId = builder.workspaceId;
@@ -104,6 +108,7 @@ public class SwfteClient {
         this.workflows = new Workflows(this);
         this.secrets = new Secrets(this);
         this.conversations = new Conversations(this);
+        this.catalog = new Catalog(this);
     }
     
     /**
@@ -181,6 +186,14 @@ public class SwfteClient {
      */
     public Conversations conversations() {
         return conversations;
+    }
+
+    /**
+     * Access the Catalog API ({@code /v2/catalog}) — search proven artifacts,
+     * read their evidence and the contract for invoking them.
+     */
+    public Catalog catalog() {
+        return catalog;
     }
 
     /**
@@ -283,6 +296,24 @@ public class SwfteClient {
         return maxRetries;
     }
     
+    /**
+     * Root of the agents-service API, where agent chat ({@code /v1/agents/...}),
+     * workflow invoke ({@code /v2/workflows/...}), the catalog ({@code /v2/catalog/...})
+     * and the other management resources live. See {@link Builder#apiBaseUrl(String)}.
+     */
+    public String getApiBaseUrl() {
+        return apiBaseUrl;
+    }
+
+    /**
+     * Derive the agents-service root from a gateway URL by dropping a trailing
+     * {@code /v1/gateway} or {@code /v2/gateway}:
+     * {@code https://api.swfte.com/agents/v2/gateway -> https://api.swfte.com/agents}.
+     */
+    public static String deriveApiBaseUrl(String baseUrl) {
+        return baseUrl.replaceAll("/+$", "").replaceAll("/v[12]/gateway$", "");
+    }
+
     public String getWorkspaceId() {
         return workspaceId;
     }
@@ -296,6 +327,7 @@ public class SwfteClient {
         private int timeout = 60000;
         private int maxRetries = 3;
         private String workspaceId;
+        private String apiBaseUrl;
         
         /**
          * Set the API key (required).
@@ -329,6 +361,28 @@ public class SwfteClient {
             return this;
         }
         
+        /**
+         * Set the agents-service API root (agent chat, workflow invoke, catalog and
+         * the other management resources). Defaults to {@code SWFTE_API_BASE_URL},
+         * else {@code baseUrl} with its trailing {@code /v1/gateway} or
+         * {@code /v2/gateway} removed ({@code https://api.swfte.com/agents} by default).
+         */
+        public Builder apiBaseUrl(String apiBaseUrl) {
+            this.apiBaseUrl = apiBaseUrl;
+            return this;
+        }
+
+        private String resolveApiBaseUrl() {
+            String explicit = apiBaseUrl;
+            if (explicit == null || explicit.isEmpty()) {
+                explicit = System.getenv("SWFTE_API_BASE_URL");
+            }
+            if (explicit != null && !explicit.isEmpty()) {
+                return explicit.replaceAll("/+$", "");
+            }
+            return deriveApiBaseUrl(baseUrl);
+        }
+
         /**
          * Set the workspace ID.
          */
