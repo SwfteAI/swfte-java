@@ -30,9 +30,10 @@ public class AgentChatResponse {
     /** Build from the raw response body. */
     public static AgentChatResponse fromMap(Map<String, Object> body) {
         Map<String, Object> data = body == null ? Collections.emptyMap() : body;
-        Object reply = data.get("response");
+        // content is canonical (CONTRACT rev 6); response is the legacy alias (BT-N12).
+        Object reply = data.get("content");
         if (reply == null) {
-            reply = data.get("content");
+            reply = data.get("response");
         }
         String text;
         if (reply == null) {

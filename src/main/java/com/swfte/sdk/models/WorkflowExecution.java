@@ -41,9 +41,11 @@ public class WorkflowExecution {
         CANCELED
     }
 
-    /** Where an execution sits: still running, or which terminal outcome. */
+    /** Where an execution sits: still running, paused for input, or which terminal outcome. */
     public enum Outcome {
         RUNNING,
+        /** Waiting for a person (HUMAN_INPUT gate) or an external event; not terminal, but polling will not move it on. */
+        PAUSED,
         SUCCEEDED,
         FAILED,
         CANCELLED
@@ -58,6 +60,50 @@ public class WorkflowExecution {
     /** Statuses meaning the run was cancelled (both spellings). */
     public static final Set<String> CANCELLED_STATUSES =
         Collections.unmodifiableSet(new HashSet<>(Arrays.asList("CANCELLED", "CANCELED")));
+    /**
+     * Statuses meaning the run waits for input: agents-service reports {@code PAUSED} for a
+     * HUMAN_INPUT gate; other surfaces say {@code WAITING_FOR_INPUT} (BT-N5).
+     */
+    public static final Set<String> PAUSED_STATUSES = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
+        "PAUSED", "WAITING_FOR_INPUT", "WAITING", "AWAITING_INPUT", "AWAITING_HUMAN", "AWAITING_APPROVAL")));
+
+    /** A node a paused run is waiting on. */
+    public static final class PausedNode {
+        private final String nodeId;
+        private final String nodeType;
+        private final String status;
+        private final String reason;
+
+        public PausedNode(String nodeId, String nodeType, String status, String reason) {
+            this.nodeId = nodeId;
+            this.nodeType = nodeType;
+            this.status = status;
+            this.reason = reason;
+        }
+
+        public String getNodeId() {
+            return nodeId;
+        }
+
+        /** e.g. {@code HUMAN_INPUT}; may be null. */
+        public String getNodeType() {
+            return nodeType;
+        }
+
+        public String getStatus() {
+            return status;
+        }
+
+        /** e.g. {@code HumanInputRequired}; may be null. */
+        public String getReason() {
+            return reason;
+        }
+
+        @Override
+        public String toString() {
+            return nodeId + (nodeType == null ? "" : " (" + nodeType + ")");
+        }
+    }
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -67,6 +113,7 @@ public class WorkflowExecution {
         if (SUCCESS_STATUSES.contains(s)) return Outcome.SUCCEEDED;
         if (FAILURE_STATUSES.contains(s)) return Outcome.FAILED;
         if (CANCELLED_STATUSES.contains(s)) return Outcome.CANCELLED;
+        if (PAUSED_STATUSES.contains(s)) return Outcome.PAUSED;
         return Outcome.RUNNING;
     }
 
@@ -188,7 +235,34 @@ public class WorkflowExecution {
 
     @JsonIgnore
     public boolean isTerminal() {
-        return getOutcome() != Outcome.RUNNING;
+        Outcome o = getOutcome();
+        return o != Outcome.RUNNING && o != Outcome.PAUSED;
+    }
+
+    /** True when the run stopped to wait for input; see {@link #getWaitingFor()}. */
+    @JsonIgnore
+    public boolean isPaused() {
+        return getOutcome() == Outcome.PAUSED;
+    }
+
+    /** The node(s) a paused run waits on (typically a HUMAN_INPUT gate), from {@code nodeExecutions}. */
+    @JsonIgnore
+    public List<PausedNode> getWaitingFor() {
+        List<PausedNode> out = new java.util.ArrayList<>();
+        if (nodeExecutions == null) return out;
+        for (Map<String, Object> n : nodeExecutions) {
+            if (n == null) continue;
+            String st = n.get("status") == null ? "" : String.valueOf(n.get("status")).toUpperCase(Locale.ROOT);
+            Object reason = n.get("pauseReason");
+            if (reason == null && n.get("outputData") instanceof Map) reason = ((Map<?, ?>) n.get("outputData")).get("pauseReason");
+            if (!PAUSED_STATUSES.contains(st) && reason == null) continue;
+            Object id = n.get("nodeId") != null ? n.get("nodeId") : n.get("id");
+            if (id == null) continue;
+            Object type = n.get("nodeType") != null ? n.get("nodeType") : n.get("type");
+            out.add(new PausedNode(String.valueOf(id), type == null ? null : String.valueOf(type),
+                st.isEmpty() ? "PAUSED" : st, reason == null ? null : String.valueOf(reason)));
+        }
+        return out;
     }
 
     @JsonIgnore

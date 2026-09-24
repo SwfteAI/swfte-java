@@ -7,6 +7,7 @@ import com.swfte.sdk.exceptions.AuthenticationException;
 import com.swfte.sdk.exceptions.RateLimitException;
 import com.swfte.sdk.exceptions.SwfteException;
 import com.swfte.sdk.exceptions.WorkflowExecutionException;
+import com.swfte.sdk.exceptions.WorkflowPausedException;
 import com.swfte.sdk.exceptions.WorkflowTimeoutException;
 import com.swfte.sdk.models.AgentChatOptions;
 import com.swfte.sdk.models.AgentChatResponse;
@@ -22,6 +23,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -233,7 +235,7 @@ class SotInvokeTest {
             for (String s : new String[] {"CANCELLED", "CANCELED"}) {
                 assertEquals(WorkflowExecution.Outcome.CANCELLED, WorkflowExecution.classify(s), s);
             }
-            for (String s : new String[] {"PENDING", "RUNNING", "PAUSED", "", null}) {
+            for (String s : new String[] {"PENDING", "RUNNING", "", null}) {
                 assertEquals(WorkflowExecution.Outcome.RUNNING, WorkflowExecution.classify(s), String.valueOf(s));
             }
         }
@@ -390,6 +392,75 @@ class SotInvokeTest {
             SwfteClient c = client(new Response(404, "{\"error\":\"not found\"}"));
             ApiException e = assertThrows(ApiException.class, () -> c.catalog().get("workflow", "nope"));
             assertEquals(404, e.getStatusCode());
+        }
+    }
+
+    /** Battle-test regressions (BATTLE_TEST.md N5, N12, N13). */
+    @Nested
+    class BattleRegressions {
+        @Test
+        void pausedAndWaitingForInputClassifyAsPaused() {
+            for (String st : new String[] {"PAUSED", "WAITING_FOR_INPUT", "AWAITING_HUMAN", "awaiting_input", "WAITING"}) {
+                assertEquals(WorkflowExecution.Outcome.PAUSED, WorkflowExecution.classify(st), st);
+            }
+            assertTrue(WorkflowExecution.PAUSED_STATUSES.contains("WAITING_FOR_INPUT"));
+        }
+
+        @Test
+        void invokeAndWaitReturnsPromptlyWhenPausedForInput() throws Exception {
+            String paused = "{\"execution\":{\"executionId\":\"ex_1\",\"workflowId\":\"wf_1\",\"status\":\"WAITING_FOR_INPUT\"},"
+                + "\"nodeExecutions\":[{\"nodeId\":\"start\",\"nodeType\":\"START\",\"status\":\"SUCCEEDED\"},"
+                + "{\"nodeId\":\"approve_1\",\"nodeType\":\"HUMAN_INPUT\",\"status\":\"PAUSED\",\"pauseReason\":\"HumanInputRequired\"}],\"progress\":50}";
+            SwfteClient c = client(new Response(202, "{\"executionId\":\"ex_1\"}"), ok(statusBody("RUNNING", null)), ok(paused));
+            long started = System.nanoTime();
+            WorkflowExecution res = c.workflows().invokeAndWait("wf_1", null, 300000, 1);
+            assertTrue((System.nanoTime() - started) / 1_000_000L < 2000, "burned the timeout");
+            assertEquals(3, server.recorded().size());
+            assertTrue(res.isPaused());
+            assertFalse(res.isTerminal());
+            assertEquals(WorkflowExecution.Outcome.PAUSED, res.getOutcome());
+            assertEquals("WAITING_FOR_INPUT", res.getStatusRaw());
+            List<WorkflowExecution.PausedNode> waiting = res.getWaitingFor();
+            assertEquals(1, waiting.size());
+            assertEquals("approve_1", waiting.get(0).getNodeId());
+            assertEquals("HUMAN_INPUT", waiting.get(0).getNodeType());
+            assertEquals("HumanInputRequired", waiting.get(0).getReason());
+        }
+
+        @Test
+        void backendSpellingPausedIsPausedToo() throws Exception {
+            SwfteClient c = client(new Response(202, "{\"executionId\":\"ex_1\"}"), ok(statusBody("PAUSED", null)));
+            WorkflowExecution res = c.workflows().invokeAndWait("wf_1", null, 300000, 1);
+            assertTrue(res.isPaused());
+            assertEquals(WorkflowExecution.Status.PAUSED, res.getStatus());
+        }
+
+        @Test
+        void throwOnPauseRaisesWorkflowPausedException() throws Exception {
+            SwfteClient c = client(new Response(202, "{\"executionId\":\"ex_1\"}"), ok(statusBody("WAITING_FOR_INPUT", null)));
+            WorkflowPausedException e = assertThrows(WorkflowPausedException.class,
+                () -> c.workflows().invokeAndWait("wf_1", null, 300000, 1, true));
+            assertEquals("ex_1", e.getExecutionId());
+            assertEquals("WAITING_FOR_INPUT", e.getStatus());
+        }
+
+        @Test
+        void waitForCompletionReturnsEarlyOnPause() throws Exception {
+            SwfteClient c = client(ok(statusBody("PAUSED", null)));
+            assertTrue(c.workflows().waitForCompletion("ex_1", 300000, 1).isPaused());
+        }
+
+        @Test
+        void chatPrefersContentOverLegacyResponse() throws Exception {
+            SwfteClient c = client(ok("{\"content\":\"A\",\"response\":\"B\",\"conversationId\":\"c\"}"));
+            assertEquals("A", c.agents().chat("ag_1", "hi").getResponse());
+        }
+
+        @Test
+        void deriveApiBaseUrlStripsBareGateway() {
+            assertEquals("https://x/agents", SwfteClient.deriveApiBaseUrl("https://x/agents/gateway"));
+            assertEquals("https://x/agents", SwfteClient.deriveApiBaseUrl("https://x/agents/gateway/"));
+            assertEquals("https://x/gateways", SwfteClient.deriveApiBaseUrl("https://x/gateways"));
         }
     }
 }

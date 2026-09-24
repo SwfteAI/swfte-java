@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `workflows().invokeAndWait` / `waitForCompletion` no longer burn the whole
+  timeout on a human-in-the-loop run: `PAUSED` / `WAITING_FOR_INPUT`
+  (`WorkflowExecution.PAUSED_STATUSES`) return at once with `isPaused()` true and
+  `getWaitingFor()` naming the gate; the `throwOnPause` overload throws
+  `WorkflowPausedException` instead. `WorkflowExecution.Outcome` gains `PAUSED`.
+- `AgentChatResponse.getResponse()` prefers the canonical `content` over the
+  legacy `response` when a reply carries both.
+- `SwfteClient.deriveApiBaseUrl` also strips a bare trailing `/gateway`.
+
 ### Added
 
 - `agents().chat(agentId, message[, AgentChatOptions])` —

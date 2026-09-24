@@ -311,7 +311,8 @@ public class SwfteClient {
      * {@code https://api.swfte.com/agents/v2/gateway -> https://api.swfte.com/agents}.
      */
     public static String deriveApiBaseUrl(String baseUrl) {
-        return baseUrl.replaceAll("/+$", "").replaceAll("/v[12]/gateway$", "");
+        // Same suffixes the Python SDK strips (BT-N13): /v2/gateway, /v1/gateway, /gateway.
+        return baseUrl.replaceAll("/+$", "").replaceAll("/(?:v[12]/)?gateway$", "");
     }
 
     public String getWorkspaceId() {

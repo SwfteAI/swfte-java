@@ -11,6 +11,7 @@ import com.swfte.sdk.models.WorkflowInvocation;
 import com.swfte.sdk.exceptions.ApiException;
 import com.swfte.sdk.exceptions.SwfteException;
 import com.swfte.sdk.exceptions.WorkflowExecutionException;
+import com.swfte.sdk.exceptions.WorkflowPausedException;
 import com.swfte.sdk.exceptions.WorkflowTimeoutException;
 
 import java.net.URLEncoder;
@@ -286,13 +287,25 @@ public class Workflows {
      * @param inputs the workflow inputs
      * @param timeoutMs give up after this long (client side; the run keeps going)
      * @param pollIntervalMs delay between status polls
-     * @return the final execution when it succeeded ({@code SUCCESS}, {@code SUCCEEDED} or {@code COMPLETED})
+     * @return the final execution when it succeeded ({@code SUCCESS}, {@code SUCCEEDED} or {@code COMPLETED}),
+     *         or — returned at once rather than polled until the timeout — the execution paused for
+     *         human input ({@code PAUSED}, {@code WAITING_FOR_INPUT}; {@link WorkflowExecution#isPaused()}
+     *         true, {@link WorkflowExecution#getWaitingFor()} names the gate)
      * @throws WorkflowExecutionException the run ended FAILED/TIMEOUT or CANCELLED/CANCELED
      * @throws WorkflowTimeoutException {@code timeoutMs} elapsed first; the run is not cancelled
      */
     public WorkflowExecution invokeAndWait(String workflowId, Map<String, Object> inputs, long timeoutMs, long pollIntervalMs) {
+        return invokeAndWait(workflowId, inputs, timeoutMs, pollIntervalMs, false);
+    }
+
+    /**
+     * {@link #invokeAndWait(String, Map, long, long)}, throwing {@link WorkflowPausedException}
+     * instead of returning when the run pauses for input and {@code throwOnPause} is true.
+     */
+    public WorkflowExecution invokeAndWait(String workflowId, Map<String, Object> inputs, long timeoutMs, long pollIntervalMs,
+                                           boolean throwOnPause) {
         WorkflowInvocation invocation = invoke(workflowId, inputs);
-        return pollUntilTerminal(invocation.getExecutionId(), timeoutMs, pollIntervalMs);
+        return pollUntilTerminal(invocation.getExecutionId(), timeoutMs, pollIntervalMs, throwOnPause);
     }
 
     /**
@@ -318,7 +331,7 @@ public class Workflows {
         return WorkflowExecution.fromStatusResponse(executionId, body);
     }
 
-    private WorkflowExecution pollUntilTerminal(String executionId, long timeoutMs, long pollIntervalMs) {
+    private WorkflowExecution pollUntilTerminal(String executionId, long timeoutMs, long pollIntervalMs, boolean throwOnPause) {
         long deadline = System.nanoTime() + Math.max(0, timeoutMs) * 1_000_000L;
         long interval = Math.max(0, pollIntervalMs);
         while (true) { // always polls at least once, even with timeoutMs = 0
@@ -327,6 +340,16 @@ public class Workflows {
             switch (execution.getOutcome()) {
                 case SUCCEEDED:
                     return execution;
+                case PAUSED: {
+                    // BT-N5: a human-in-the-loop run will not finish by being polled; hand it back now.
+                    if (!throwOnPause) return execution;
+                    List<WorkflowExecution.PausedNode> waiting = execution.getWaitingFor();
+                    StringBuilder where = new StringBuilder();
+                    for (WorkflowExecution.PausedNode n : waiting) where.append(where.length() == 0 ? " at " : ", ").append(n.getNodeId());
+                    throw new WorkflowPausedException(
+                        "Execution " + executionId + " is waiting for input (" + status + where + ")",
+                        executionId, status, waiting, execution);
+                }
                 case FAILED:
                     throw new WorkflowExecutionException(
                         "Execution " + executionId + " " + status.toLowerCase(java.util.Locale.ROOT)
@@ -431,7 +454,7 @@ public class Workflows {
      * @throws WorkflowTimeoutException if it does not finish within {@code timeoutMs}
      */
     public WorkflowExecution waitForCompletion(String executionId, long timeoutMs, long pollIntervalMs) {
-        return pollUntilTerminal(executionId, timeoutMs, pollIntervalMs);
+        return pollUntilTerminal(executionId, timeoutMs, pollIntervalMs, false);
     }
 
     /**
