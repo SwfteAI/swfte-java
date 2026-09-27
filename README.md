@@ -233,6 +233,41 @@ CatalogContract contract = client.catalog().contract("workflow", page.getItems()
 System.out.println(contract.getInvoke().getMethod() + " " + contract.getInvoke().getPath());
 ```
 
+### Call-site attribution (code map)
+
+Runs can be attributed to the line of code that started them. Every artifact-invoking method
+has an overload that takes a `CallSite`, sent as the `X-Swfte-Callsite` header:
+
+```java
+import com.swfte.sdk.CallSite;
+
+CallSite site = CallSite.of("cs_0123456789abcdef01234567"); // written by `swfte scan --tag`
+
+client.workflows().invoke("wf_123", inputs, site);
+client.workflows().invokeAndWait("wf_123", inputs, site);          // header on the invoke request only
+client.workflows().execute("wf_123", inputs, site);
+client.agents().chat("agent_123", "Hello!", options, site);        // options may be null
+client.chatflows().startSession("cf_123", context, site);
+```
+
+Rules:
+
+- **Default: no header.** The existing overloads behave exactly as before.
+- **Explicit wins.** A `CallSite` you pass is sent as given, and stack capture is not consulted.
+- **Invalid ids are never sent.** Anything other than `cs_` plus 24 lowercase hex characters is
+  dropped silently; the call still goes out, without the header.
+- **Opt-in stack capture (dev/staging).** With no explicit id, set `SWFTE_CALLSITE_STACK=1` (or
+  `-Dswfte.callsite.stack=1`). The SDK takes the first stack frame outside itself and looks up
+  `<package path>/<File>.java:<line>` in the local caller map written by `swfte scan`
+  (`SWFTE_CODEMAP_CALLERS`, else `./.swfte/codemap/callers.json`). The map entry whose path ends
+  with that package path and file name supplies the id; no entry, an ambiguous entry, or no map
+  means no header. The map never leaves your machine; only the id is sent.
+- **Refused in production.** When `-Dswfte.env=production` or `SWFTE_ENV=production`, stack
+  capture is ignored with one warning. Explicit `CallSite` ids are still sent.
+
+`SwfteClient.builder().callsiteResolver(new CallsiteResolver(env, props, cwd, warn))` replaces the
+environment and system-property lookups, which is how the SDK's own tests exercise these rules.
+
 ### GPU Model Deployments
 
 ```java

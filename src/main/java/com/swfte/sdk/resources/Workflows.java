@@ -1,5 +1,6 @@
 package com.swfte.sdk.resources;
 
+import com.swfte.sdk.CallSite;
 import com.swfte.sdk.SwfteClient;
 import com.swfte.sdk.HttpClient;
 import com.swfte.sdk.models.Workflow;
@@ -226,11 +227,32 @@ public class Workflows {
      * @return the workflow execution
      */
     public WorkflowExecution execute(String workflowId, Map<String, Object> inputs, boolean skipValidation) {
-        String url = skipValidation 
+        return execute(workflowId, inputs, skipValidation, null);
+    }
+
+    /**
+     * {@link #execute(String, Map)} attributed to a code-map call site.
+     *
+     * @param callsite sent as {@value CallSite#HEADER} when valid; {@code null} falls back to
+     *                 opt-in stack capture (see {@link com.swfte.sdk.CallsiteResolver})
+     */
+    public WorkflowExecution execute(String workflowId, Map<String, Object> inputs, CallSite callsite) {
+        return execute(workflowId, inputs, false, callsite);
+    }
+
+    /**
+     * {@link #execute(String, Map, boolean)} attributed to a code-map call site.
+     *
+     * @param callsite sent as {@value CallSite#HEADER} when valid; {@code null} falls back to
+     *                 opt-in stack capture (see {@link com.swfte.sdk.CallsiteResolver})
+     */
+    public WorkflowExecution execute(String workflowId, Map<String, Object> inputs, boolean skipValidation, CallSite callsite) {
+        String url = skipValidation
             ? getBaseUrl() + "/" + workflowId + "/execute?skipValidation=true"
             : getBaseUrl() + "/" + workflowId + "/execute";
-        
-        return httpClient.postWithCustomBase(url, inputs != null ? inputs : new HashMap<>(), WorkflowExecution.class);
+
+        return httpClient.requestWithCustomBase("POST", url, inputs != null ? inputs : new HashMap<>(), WorkflowExecution.class,
+            client.getCallsiteResolver().resolve(callsite));
     }
     
     /**
@@ -246,8 +268,18 @@ public class Workflows {
      * @param inputs the workflow inputs ({@code null} sends {@code {}})
      * @return the accepted invocation, carrying the execution ID
      */
-    @SuppressWarnings("unchecked")
     public WorkflowInvocation invoke(String workflowId, Map<String, Object> inputs) {
+        return invoke(workflowId, inputs, null);
+    }
+
+    /**
+     * {@link #invoke(String, Map)} attributed to a code-map call site.
+     *
+     * @param callsite sent as {@value CallSite#HEADER} when valid; {@code null} falls back to
+     *                 opt-in stack capture (see {@link com.swfte.sdk.CallsiteResolver})
+     */
+    @SuppressWarnings("unchecked")
+    public WorkflowInvocation invoke(String workflowId, Map<String, Object> inputs, CallSite callsite) {
         if (workflowId == null || workflowId.isEmpty()) {
             throw new SwfteException("workflowId is required");
         }
@@ -255,7 +287,8 @@ public class Workflows {
             "POST",
             getBaseUrl() + "/" + encode(workflowId) + "/invoke",
             inputs != null ? inputs : new HashMap<>(),
-            Map.class
+            Map.class,
+            client.getCallsiteResolver().resolve(callsite)
         );
         Object executionId = res == null ? null : res.get("executionId");
         if (executionId == null || String.valueOf(executionId).isEmpty()) {
@@ -304,7 +337,34 @@ public class Workflows {
      */
     public WorkflowExecution invokeAndWait(String workflowId, Map<String, Object> inputs, long timeoutMs, long pollIntervalMs,
                                            boolean throwOnPause) {
-        WorkflowInvocation invocation = invoke(workflowId, inputs);
+        return invokeAndWait(workflowId, inputs, timeoutMs, pollIntervalMs, throwOnPause, null);
+    }
+
+    /**
+     * {@link #invokeAndWait(String, Map)} attributed to a code-map call site (sent on the invoke
+     * request only, not on the status polls).
+     */
+    public WorkflowExecution invokeAndWait(String workflowId, Map<String, Object> inputs, CallSite callsite) {
+        return invokeAndWait(workflowId, inputs, 300000, 2000, false, callsite);
+    }
+
+    /**
+     * {@link #invokeAndWait(String, Map, long, long)} attributed to a code-map call site.
+     */
+    public WorkflowExecution invokeAndWait(String workflowId, Map<String, Object> inputs, long timeoutMs, long pollIntervalMs,
+                                           CallSite callsite) {
+        return invokeAndWait(workflowId, inputs, timeoutMs, pollIntervalMs, false, callsite);
+    }
+
+    /**
+     * {@link #invokeAndWait(String, Map, long, long, boolean)} attributed to a code-map call site.
+     *
+     * @param callsite sent as {@value CallSite#HEADER} on the invoke request when valid; {@code null}
+     *                 falls back to opt-in stack capture (see {@link com.swfte.sdk.CallsiteResolver})
+     */
+    public WorkflowExecution invokeAndWait(String workflowId, Map<String, Object> inputs, long timeoutMs, long pollIntervalMs,
+                                           boolean throwOnPause, CallSite callsite) {
+        WorkflowInvocation invocation = invoke(workflowId, inputs, callsite);
         return pollUntilTerminal(invocation.getExecutionId(), timeoutMs, pollIntervalMs, throwOnPause);
     }
 

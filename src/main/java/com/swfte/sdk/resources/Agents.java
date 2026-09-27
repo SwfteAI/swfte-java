@@ -1,5 +1,6 @@
 package com.swfte.sdk.resources;
 
+import com.swfte.sdk.CallSite;
 import com.swfte.sdk.SwfteClient;
 import com.swfte.sdk.HttpClient;
 import com.swfte.sdk.models.Agent;
@@ -234,8 +235,20 @@ public class Agents {
      * @throws com.swfte.sdk.exceptions.RateLimitException on 429
      * @throws com.swfte.sdk.exceptions.ApiException on any other non-2xx
      */
-    @SuppressWarnings("unchecked")
     public AgentChatResponse chat(String agentId, String message, AgentChatOptions options) {
+        return chat(agentId, message, options, null);
+    }
+
+    /**
+     * {@link #chat(String, String, AgentChatOptions)} attributed to a code-map call site.
+     * (There is deliberately no {@code chat(String, String, CallSite)}: it would make existing
+     * {@code chat(id, message, null)} calls ambiguous. Pass {@code null} options instead.)
+     *
+     * @param callsite sent as {@value CallSite#HEADER} when valid; {@code null} falls back to
+     *                 opt-in stack capture (see {@link com.swfte.sdk.CallsiteResolver})
+     */
+    @SuppressWarnings("unchecked")
+    public AgentChatResponse chat(String agentId, String message, AgentChatOptions options, CallSite callsite) {
         if (agentId == null || agentId.isEmpty()) {
             throw new SwfteException("agentId is required");
         }
@@ -252,7 +265,8 @@ public class Agents {
             "POST",
             getBaseUrl() + "/" + encode(agentId) + "/chat/" + encode(opts.getUserId()),
             body,
-            Map.class
+            Map.class,
+            client.getCallsiteResolver().resolve(callsite)
         );
         return AgentChatResponse.fromMap(raw);
     }

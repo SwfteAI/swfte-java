@@ -224,6 +224,13 @@ public class HttpClient {
     }
     
     private HttpURLConnection createConnection(String url, String method) throws IOException {
+        return createConnection(url, method, null);
+    }
+
+    /**
+     * @param callsite {@value CallSite#HEADER} value; sent only when it is a valid id
+     */
+    private HttpURLConnection createConnection(String url, String method, String callsite) throws IOException {
         HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
         // HttpURLConnection doesn't natively support PATCH; use POST with X-HTTP-Method-Override
         if ("PATCH".equals(method)) {
@@ -241,6 +248,9 @@ public class HttpClient {
 
         if (client.getWorkspaceId() != null) {
             conn.setRequestProperty("X-Workspace-ID", client.getWorkspaceId());
+        }
+        if (CallSite.isValidId(callsite)) {
+            conn.setRequestProperty(CallSite.HEADER, callsite);
         }
 
         return conn;
@@ -292,10 +302,20 @@ public class HttpClient {
      * @return the parsed body, or {@code null} for an empty body
      */
     public <T> T apiRequest(String method, String path, Object body, Class<T> responseType) {
+        return apiRequest(method, path, body, responseType, null);
+    }
+
+    /**
+     * {@link #apiRequest(String, String, Object, Class)} carrying a call-site id.
+     *
+     * @param callsite the {@value CallSite#HEADER} value (from {@link CallsiteResolver#resolve});
+     *                 {@code null} or an invalid id sends no header
+     */
+    public <T> T apiRequest(String method, String path, Object body, Class<T> responseType, String callsite) {
         String url = client.getApiBaseUrl() + path;
         HttpURLConnection conn = null;
         try {
-            conn = createConnection(url, method);
+            conn = createConnection(url, method, callsite);
             if (body != null && !"GET".equals(method) && !"DELETE".equals(method)) {
                 byte[] bytes = objectMapper.writeValueAsBytes(body);
                 conn.setDoOutput(true);
@@ -392,12 +412,22 @@ public class HttpClient {
      * Make an HTTP request with custom base URL and retry logic.
      */
     public <T> T requestWithCustomBase(String method, String path, Object body, Class<T> responseType) {
+        return requestWithCustomBase(method, path, body, responseType, null);
+    }
+
+    /**
+     * {@link #requestWithCustomBase(String, String, Object, Class)} carrying a call-site id.
+     *
+     * @param callsite the {@value CallSite#HEADER} value (from {@link CallsiteResolver#resolve});
+     *                 {@code null} or an invalid id sends no header
+     */
+    public <T> T requestWithCustomBase(String method, String path, Object body, Class<T> responseType, String callsite) {
         String url = getCustomBaseUrl() + path;
         Exception lastException = null;
-        
+
         for (int attempt = 0; attempt < client.getMaxRetries(); attempt++) {
             try {
-                HttpURLConnection conn = createConnection(url, method);
+                HttpURLConnection conn = createConnection(url, method, callsite);
                 
                 if (body != null && !"GET".equals(method) && !"DELETE".equals(method)) {
                     String jsonBody = objectMapper.writeValueAsString(body);

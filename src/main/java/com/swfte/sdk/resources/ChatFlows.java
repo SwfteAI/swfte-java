@@ -1,5 +1,6 @@
 package com.swfte.sdk.resources;
 
+import com.swfte.sdk.CallSite;
 import com.swfte.sdk.SwfteClient;
 import com.swfte.sdk.HttpClient;
 import com.swfte.sdk.models.ChatFlow;
@@ -101,10 +102,22 @@ public class ChatFlows {
 
     /** Start a runtime session against a deployed chatflow. */
     public ChatFlowSession startSession(String chatFlowId, Map<String, Object> context) {
-        return httpClient.postWithCustomBase(
+        return startSession(chatFlowId, context, null);
+    }
+
+    /**
+     * {@link #startSession(String, Map)} attributed to a code-map call site.
+     *
+     * @param callsite sent as {@value CallSite#HEADER} when valid; {@code null} falls back to
+     *                 opt-in stack capture (see {@link com.swfte.sdk.CallsiteResolver})
+     */
+    public ChatFlowSession startSession(String chatFlowId, Map<String, Object> context, CallSite callsite) {
+        return httpClient.requestWithCustomBase(
+            "POST",
             base() + "/" + chatFlowId + "/sessions",
             context != null ? context : new HashMap<>(),
-            ChatFlowSession.class
+            ChatFlowSession.class,
+            client.getCallsiteResolver().resolve(callsite)
         );
     }
 

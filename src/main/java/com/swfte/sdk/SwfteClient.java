@@ -52,7 +52,8 @@ public class SwfteClient {
     private final int timeout;
     private final int maxRetries;
     private final String workspaceId;
-    
+    private final CallsiteResolver callsiteResolver;
+
     private final Chat chat;
     private final Images images;
     private final Embeddings embeddings;
@@ -84,6 +85,7 @@ public class SwfteClient {
         this.timeout = builder.timeout;
         this.maxRetries = builder.maxRetries;
         this.workspaceId = builder.workspaceId;
+        this.callsiteResolver = builder.callsiteResolver != null ? builder.callsiteResolver : CallsiteResolver.system();
 
         // Initialize resources
         this.chat = new Chat(this);
@@ -318,7 +320,15 @@ public class SwfteClient {
     public String getWorkspaceId() {
         return workspaceId;
     }
-    
+
+    /**
+     * Decides the {@value CallSite#HEADER} header for artifact invocations; see
+     * {@link CallsiteResolver} and {@link Builder#callsiteResolver(CallsiteResolver)}.
+     */
+    public CallsiteResolver getCallsiteResolver() {
+        return callsiteResolver;
+    }
+
     /**
      * Builder for SwfteClient.
      */
@@ -329,7 +339,18 @@ public class SwfteClient {
         private int maxRetries = 3;
         private String workspaceId;
         private String apiBaseUrl;
-        
+        private CallsiteResolver callsiteResolver;
+
+        /**
+         * Replace how call-site ids are resolved when a method is called without an explicit
+         * {@link CallSite} (defaults to {@link CallsiteResolver#system()}, which reads the real
+         * environment and system properties). Mainly for tests and embedders.
+         */
+        public Builder callsiteResolver(CallsiteResolver callsiteResolver) {
+            this.callsiteResolver = callsiteResolver;
+            return this;
+        }
+
         /**
          * Set the API key (required).
          */
