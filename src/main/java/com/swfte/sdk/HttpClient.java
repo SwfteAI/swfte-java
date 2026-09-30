@@ -1,5 +1,6 @@
 package com.swfte.sdk;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.swfte.sdk.exceptions.AuthenticationException;
@@ -9,6 +10,7 @@ import com.swfte.sdk.exceptions.SwfteException;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -47,59 +49,156 @@ public class HttpClient {
     }
     
     /**
-     * Make an HTTP request with retry logic.
+     * Make an HTTP request against the gateway base URL.
+     *
+     * <p>Retry policy (see {@link #execute}): never on any 4xx; only
+     * {@link IOException}s and 5xx responses are retried, and only for idempotent
+     * methods (GET/HEAD). Use {@link #request(String, String, Object, Class, String)}
+     * to retry a write that carries an idempotency key.</p>
      */
     public <T> T request(String method, String path, Object body, Class<T> responseType) {
-        String url = client.getBaseUrl() + path;
-        Exception lastException = null;
-        
-        for (int attempt = 0; attempt < client.getMaxRetries(); attempt++) {
+        return execute(client.getBaseUrl() + path, method, path, body, responseType, null);
+    }
+
+    /**
+     * Like {@link #request(String, String, Object, Class)}, but sends the given
+     * {@code Idempotency-Key} header, which makes the request safe to retry.
+     */
+    public <T> T request(String method, String path, Object body, Class<T> responseType, String idempotencyKey) {
+        return execute(client.getBaseUrl() + path, method, path, body, responseType, idempotencyKey);
+    }
+
+    /** GET and HEAD are safe to repeat; anything else needs an idempotency key. */
+    static boolean isRetriable(String method, String idempotencyKey) {
+        if (idempotencyKey != null && !idempotencyKey.isEmpty()) {
+            return true;
+        }
+        return "GET".equalsIgnoreCase(method) || "HEAD".equalsIgnoreCase(method);
+    }
+
+    /**
+     * The one request loop behind {@link #request} and {@link #requestWithCustomBase}.
+     *
+     * <ul>
+     *   <li>401/403 {@link AuthenticationException}, 429 {@link RateLimitException}
+     *       (with {@code Retry-After}), other 4xx {@link ApiException}: thrown at once,
+     *       never retried.</li>
+     *   <li>5xx and {@link IOException}: retried up to {@code maxRetries} attempts
+     *       (at least one), but only when {@link #isRetriable}; otherwise exactly one
+     *       attempt. A 5xx that survives the attempts is rethrown as its
+     *       {@link ApiException}.</li>
+     *   <li>Bodies are sent in fixed-length streaming mode so {@link HttpURLConnection}
+     *       cannot transparently re-send a POST on its own.</li>
+     * </ul>
+     */
+    private <T> T execute(String url, String method, String path, Object body, Class<T> responseType,
+                          String idempotencyKey) {
+        int attempts = isRetriable(method, idempotencyKey) ? Math.max(1, client.getMaxRetries()) : 1;
+
+        byte[] payload = null;
+        if (body != null && !"GET".equals(method) && !"DELETE".equals(method)) {
             try {
-                HttpURLConnection conn = createConnection(url, method);
-                
-                if (body != null) {
-                    String jsonBody = objectMapper.writeValueAsString(body);
-                    try (OutputStream os = conn.getOutputStream()) {
-                        os.write(jsonBody.getBytes(StandardCharsets.UTF_8));
-                    }
-                }
-                
-                int responseCode = conn.getResponseCode();
-                
-                if (responseCode == 401) {
-                    throw new AuthenticationException("Invalid API key");
-                } else if (responseCode == 429) {
-                    throw new RateLimitException("Rate limit exceeded");
-                } else if (responseCode >= 400) {
-                    String errorBody = readErrorStream(conn);
-                    throw new ApiException("API error: " + responseCode + " - " + errorBody, responseCode);
-                }
-                
-                if (responseType == String.class) {
-                    return responseType.cast(readResponseStream(conn));
-                }
-                
-                String responseBody = readResponseStream(conn);
-                return objectMapper.readValue(responseBody, responseType);
-                
-            } catch (AuthenticationException | RateLimitException e) {
-                throw e;
-            } catch (Exception e) {
-                lastException = e;
-                if (attempt < client.getMaxRetries() - 1) {
-                    try {
-                        Thread.sleep((long) Math.pow(2, attempt) * 100);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        throw new SwfteException("Request interrupted", ie);
-                    }
-                }
+                payload = objectMapper.writeValueAsBytes(body);
+            } catch (JsonProcessingException e) {
+                throw new SwfteException("Could not serialize request body: " + method + " " + path, e);
             }
         }
-        
-        throw new SwfteException("Request failed after " + client.getMaxRetries() + " attempts", lastException);
+
+        for (int attempt = 0; ; attempt++) {
+            boolean lastAttempt = attempt + 1 >= attempts;
+            long retryAfterMs = -1;
+            HttpURLConnection conn = null;
+            try {
+                conn = createConnection(url, method);
+                if (idempotencyKey != null && !idempotencyKey.isEmpty()) {
+                    conn.setRequestProperty("Idempotency-Key", idempotencyKey);
+                }
+                if (payload != null) {
+                    conn.setDoOutput(true);
+                    conn.setFixedLengthStreamingMode(payload.length);
+                    try (OutputStream os = conn.getOutputStream()) {
+                        os.write(payload);
+                    }
+                } else {
+                    conn.setDoOutput(false);
+                }
+
+                int code = conn.getResponseCode();
+                if (code < 200 || code >= 300) {
+                    Long retryAfter = parseRetryAfterSeconds(conn.getHeaderField("Retry-After"));
+                    if (retryAfter != null) {
+                        retryAfterMs = Math.min(retryAfter, 30L) * 1000L;
+                    }
+                    throw errorFor(conn, code, method, path);
+                }
+
+                if (responseType == Void.class || code == 204) {
+                    return null;
+                }
+                String text = readResponseStream(conn);
+                if (responseType == String.class) {
+                    return responseType.cast(text);
+                }
+                if (text == null || text.isEmpty()) {
+                    return null;
+                }
+                return objectMapper.readValue(text, responseType);
+            } catch (ApiException e) {
+                if (e.getStatusCode() < 500 || lastAttempt) {
+                    throw e;
+                }
+            } catch (SwfteException e) {
+                throw e;
+            } catch (JsonProcessingException e) {
+                throw new SwfteException("Invalid response body: " + method + " " + path, e);
+            } catch (IOException e) {
+                if (lastAttempt) {
+                    String what = e instanceof java.net.SocketTimeoutException ? "Request timed out: " : "Request failed: ";
+                    throw new SwfteException(what + method + " " + path
+                        + (attempts > 1 ? " (after " + attempts + " attempts)" : ""), e);
+                }
+            } finally {
+                if (conn != null) {
+                    conn.disconnect();
+                }
+            }
+
+            try {
+                Thread.sleep(retryAfterMs >= 0 ? retryAfterMs : (long) Math.pow(2, attempt) * 100);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                throw new SwfteException("Request interrupted", ie);
+            }
+        }
     }
-    
+
+    /** Map a non-2xx response to its typed exception. Reads the error body. */
+    private SwfteException errorFor(HttpURLConnection conn, int code, String method, String path) {
+        String errorBody = readErrorStream(conn);
+        String message = "API error: " + code + " " + method + " " + path
+            + (errorBody.isEmpty() ? "" : " - " + errorBody);
+        if (code == 401 || code == 403) {
+            return new AuthenticationException(message);
+        }
+        if (code == 429) {
+            return new RateLimitException(message, parseRetryAfterSeconds(conn.getHeaderField("Retry-After")));
+        }
+        return new ApiException(message, code, errorBody);
+    }
+
+    /** {@code Retry-After} as whole seconds; null when absent or an HTTP-date. */
+    static Long parseRetryAfterSeconds(String header) {
+        if (header == null) {
+            return null;
+        }
+        try {
+            long v = Long.parseLong(header.trim());
+            return v < 0 ? null : v;
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
     /**
      * Make a streaming POST request.
      */
@@ -117,13 +216,8 @@ public class HttpClient {
             
             int responseCode = conn.getResponseCode();
             
-            if (responseCode == 401) {
-                throw new AuthenticationException("Invalid API key");
-            } else if (responseCode == 429) {
-                throw new RateLimitException("Rate limit exceeded");
-            } else if (responseCode >= 400) {
-                String errorBody = readErrorStream(conn);
-                throw new ApiException("API error: " + responseCode + " - " + errorBody, responseCode);
+            if (responseCode >= 400) {
+                throw errorFor(conn, responseCode, "POST", path);
             }
             
             BufferedReader reader = new BufferedReader(
@@ -134,7 +228,8 @@ public class HttpClient {
             return reader.lines()
                 .filter(line -> line.startsWith("data:"))
                 .map(line -> line.substring(5).stripLeading())  // Remove "data:" prefix and leading whitespace
-                .filter(data -> !data.equals("[DONE]"));
+                .filter(data -> !data.equals("[DONE]"))
+                .onClose(conn::disconnect);
                 
         } catch (IOException e) {
             throw new SwfteException("Streaming request failed", e);
@@ -156,7 +251,7 @@ public class HttpClient {
             conn.setReadTimeout(client.getTimeout() * 2);
             conn.setRequestProperty("Authorization", "Bearer " + client.getApiKey());
             conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
-            conn.setRequestProperty("User-Agent", "swfte-java/1.0.0");
+            conn.setRequestProperty("User-Agent", "swfte-java/" + SdkVersion.VERSION);
             
             if (client.getWorkspaceId() != null) {
                 conn.setRequestProperty("X-Workspace-ID", client.getWorkspaceId());
@@ -183,8 +278,7 @@ public class HttpClient {
             int responseCode = conn.getResponseCode();
             
             if (responseCode >= 400) {
-                String errorBody = readErrorStream(conn);
-                throw new ApiException("API error: " + responseCode + " - " + errorBody, responseCode);
+                throw errorFor(conn, responseCode, "POST", path);
             }
             
             String responseBody = readResponseStream(conn);
@@ -212,8 +306,7 @@ public class HttpClient {
             int responseCode = conn.getResponseCode();
             
             if (responseCode >= 400) {
-                String errorBody = readErrorStream(conn);
-                throw new ApiException("API error: " + responseCode + " - " + errorBody, responseCode);
+                throw errorFor(conn, responseCode, "POST", path);
             }
             
             return conn.getInputStream().readAllBytes();
@@ -237,7 +330,7 @@ public class HttpClient {
         conn.setReadTimeout(client.getTimeout());
         conn.setRequestProperty("Authorization", "Bearer " + client.getApiKey());
         conn.setRequestProperty("Content-Type", "application/json");
-        conn.setRequestProperty("User-Agent", "swfte-java/1.0.0");
+        conn.setRequestProperty("User-Agent", "swfte-java/" + SdkVersion.VERSION);
 
         if (client.getWorkspaceId() != null) {
             conn.setRequestProperty("X-Workspace-ID", client.getWorkspaceId());
@@ -247,17 +340,11 @@ public class HttpClient {
     }
     
     private String readResponseStream(HttpURLConnection conn) throws IOException {
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
-            StringBuilder response = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) {
-                response.append(line);
-            }
-            return response.toString();
+        try (InputStream in = conn.getInputStream()) {
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }
     }
-    
+
     private String readErrorStream(HttpURLConnection conn) {
         try {
             if (conn.getErrorStream() != null) {
@@ -309,16 +396,7 @@ public class HttpClient {
 
             int code = conn.getResponseCode();
             if (code < 200 || code >= 300) {
-                String errorBody = readErrorStream(conn);
-                String message = "API error: " + code + " " + method + " " + path
-                    + (errorBody.isEmpty() ? "" : " - " + errorBody);
-                if (code == 401 || code == 403) {
-                    throw new AuthenticationException(message);
-                }
-                if (code == 429) {
-                    throw new RateLimitException(message);
-                }
-                throw new ApiException(message, code, errorBody);
+                throw errorFor(conn, code, method, path);
             }
 
             String text = code == 204 ? "" : readResponseStream(conn);
@@ -389,64 +467,16 @@ public class HttpClient {
     }
     
     /**
-     * Make an HTTP request with custom base URL and retry logic.
+     * Make an HTTP request against the agents-service root. Same retry policy as
+     * {@link #request(String, String, Object, Class)}.
      */
     public <T> T requestWithCustomBase(String method, String path, Object body, Class<T> responseType) {
-        String url = getCustomBaseUrl() + path;
-        Exception lastException = null;
-        
-        for (int attempt = 0; attempt < client.getMaxRetries(); attempt++) {
-            try {
-                HttpURLConnection conn = createConnection(url, method);
-                
-                if (body != null && !"GET".equals(method) && !"DELETE".equals(method)) {
-                    String jsonBody = objectMapper.writeValueAsString(body);
-                    try (OutputStream os = conn.getOutputStream()) {
-                        os.write(jsonBody.getBytes(StandardCharsets.UTF_8));
-                    }
-                }
-                
-                int responseCode = conn.getResponseCode();
-                
-                if (responseCode == 401) {
-                    throw new AuthenticationException("Invalid API key");
-                } else if (responseCode == 429) {
-                    throw new RateLimitException("Rate limit exceeded");
-                } else if (responseCode >= 400) {
-                    String errorBody = readErrorStream(conn);
-                    throw new ApiException("API error: " + responseCode + " - " + errorBody, responseCode);
-                }
-                
-                if (responseType == Void.class || responseCode == 204) {
-                    return null;
-                }
-                
-                if (responseType == String.class) {
-                    return responseType.cast(readResponseStream(conn));
-                }
-                
-                String responseBody = readResponseStream(conn);
-                if (responseBody == null || responseBody.isEmpty()) {
-                    return null;
-                }
-                return objectMapper.readValue(responseBody, responseType);
-                
-            } catch (AuthenticationException | RateLimitException e) {
-                throw e;
-            } catch (Exception e) {
-                lastException = e;
-                if (attempt < client.getMaxRetries() - 1) {
-                    try {
-                        Thread.sleep((long) Math.pow(2, attempt) * 100);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        throw new SwfteException("Request interrupted", ie);
-                    }
-                }
-            }
-        }
-        
-        throw new SwfteException("Request failed after " + client.getMaxRetries() + " attempts", lastException);
+        return execute(getCustomBaseUrl() + path, method, path, body, responseType, null);
+    }
+
+    /** Like {@link #requestWithCustomBase(String, String, Object, Class)} with an idempotency key. */
+    public <T> T requestWithCustomBase(String method, String path, Object body, Class<T> responseType,
+                                       String idempotencyKey) {
+        return execute(getCustomBaseUrl() + path, method, path, body, responseType, idempotencyKey);
     }
 }
-
