@@ -24,7 +24,7 @@ Read the full company profile in [ABOUT.md](ABOUT.md), or visit [swfte.com](http
 
 ### Other official Swfte SDKs
 
-- [swfte-python](https://github.com/SwfteAI/swfte-python) — Python SDK ([PyPI](https://pypi.org/project/swfte/))
+- [swfte-python](https://github.com/SwfteAI/swfte-python) — Python SDK ([PyPI](https://pypi.org/project/swfte-sdk/))
 - [swfte-node](https://github.com/SwfteAI/swfte-node) — Node.js / TypeScript SDK ([npm](https://www.npmjs.com/package/@swfte/sdk))
 - [swfte-java](https://github.com/SwfteAI/swfte-java) — Java SDK ([Maven Central](https://search.maven.org/artifact/com.swfte/swfte-sdk))
 - [swfte-chat-widget](https://github.com/SwfteAI/swfte-chat-widget) — embeddable chat widget ([npm](https://www.npmjs.com/package/@swfte/chat-widget))
@@ -42,14 +42,14 @@ Full API reference and guides are available at [swfte.com/developers](https://ww
 <dependency>
     <groupId>com.swfte</groupId>
     <artifactId>swfte-sdk</artifactId>
-    <version>1.1.0</version>
+    <version>1.2.0</version>
 </dependency>
 ```
 
 ### Gradle
 
 ```groovy
-implementation 'com.swfte:swfte-sdk:1.1.0'
+implementation 'com.swfte:swfte-sdk:1.2.0'
 ```
 
 ## Quick Start
@@ -357,7 +357,7 @@ SwfteClient client = SwfteClient.builder()
 | `baseUrl` | `String` | `https://api.swfte.com/agents/v2/gateway` | Gateway URL (chat completions, images, embeddings, audio, models) |
 | `apiBaseUrl` | `String` | `SWFTE_API_BASE_URL` env, else `baseUrl` minus `/v1/gateway` or `/v2/gateway` | agents-service root used by agents, workflows, catalog and the other management resources |
 | `timeout` | `int` | `60000` | Request timeout (ms) |
-| `maxRetries` | `int` | `3` | Max retry attempts |
+| `maxRetries` | `int` | `3` | Attempts for idempotent requests (GET/HEAD, or a write sent with an idempotency key) after a connection failure or 5xx. Never applied to 4xx or to other writes. Values below 1 mean one attempt |
 | `workspaceId` | `String` | `SWFTE_WORKSPACE_ID` env | Workspace ID |
 
 ## Error Handling
@@ -387,8 +387,10 @@ try {
 | `WorkflowExecutionException` | `invokeAndWait` / `waitForCompletion`: the run ended FAILED, TIMEOUT or CANCELLED/CANCELED |
 | `WorkflowTimeoutException` | `invokeAndWait` / `waitForCompletion`: gave up polling; the run is not cancelled |
 
-`agents().chat`, `workflows().invoke*`, `getExecutionStatus` and `catalog()` map 401/403
-to `AuthenticationException` and 429 to `RateLimitException`, and are never retried.
+Every call maps 401/403 to `AuthenticationException`, 429 to `RateLimitException`
+(`getRetryAfterSeconds()` carries the `Retry-After` header when the server sent one) and any
+other non-2xx status to `ApiException` (`getStatusCode()`). Connection failures and timeouts are
+`SwfteException`.
 
 ## Supported Providers
 
@@ -411,6 +413,19 @@ We welcome contributions. Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guid
 All contributors must sign the [Swfte CLA](https://cla.swfte.com) before their first pull request can be merged.
 
 ## Security
+
+- **API key handling.** Set the key with `.apiKey(...)` or `SWFTE_API_KEY`; do not commit it.
+  It is sent only as an `Authorization: Bearer` header. `SwfteClient` has no `toString`
+  that prints it, the SDK does not log, and SDK exception messages do not contain it.
+- **TLS.** The SDK never overrides certificate or hostname verification; use `https://` base URLs
+  (`http://` sends the key in cleartext and is only appropriate for localhost).
+- **Retries.** Requests are retried only after a connection failure, timeout or 5xx, and only when
+  they are idempotent: GET/HEAD, or a write sent with an `Idempotency-Key`. A 4xx (including
+  401/403/429) is never retried, and a POST/PUT/PATCH/DELETE without an idempotency key is sent
+  exactly once, so a call that may already have run is never repeated.
+- **Timeouts.** Every request has connect and read timeouts (`timeout`, 60000 ms by default).
+- **Redirects.** Redirects use `HttpURLConnection` defaults, which do not forward the
+  `Authorization` header to a different origin.
 
 To report a vulnerability, please see [SECURITY.md](SECURITY.md). Do not open a public issue for security concerns.
 

@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-09-30
+
+First release published to Maven Central. Versions 1.0.x and 1.1.x were never
+published; 1.2.0 supersedes them.
+
+### Security
+
+- Jackson 2.15.3 -> 2.18.10 (databind, core, annotations); 2.15.3 carried 11 published advisories.
+- **`HttpClient` retry policy.** It used to retry every failure three times, including
+  403/404/500 on POST create calls (duplicate creates and billing). Now: a 4xx is never retried
+  (401/403 `AuthenticationException`, 429 `RateLimitException` carrying `Retry-After`,
+  other 4xx `ApiException`); only connection errors, timeouts and 5xx are retried, and only for
+  GET/HEAD or a request sent with an idempotency key (new
+  `request(..., idempotencyKey)` / `requestWithCustomBase(..., idempotencyKey)` overloads).
+  Bodies are sent in fixed-length streaming mode so `HttpURLConnection` cannot re-send a POST
+  on its own. `maxRetries(0)` now makes one attempt instead of failing without sending.
+- Release workflow: actions pinned to full commit SHAs, GitHub Release step moved into its own
+  job (away from the GPG key and Central token), publish only from `main`, the "already on
+  Central" check reads repo1.maven.org (fail closed) instead of the lagging search index.
+
+### Fixed
+
+- `User-Agent` reports the real version (was hard-coded `swfte-java/1.0.0`); the pom is the
+  only place it is written (`SdkVersion`).
+- README install snippets and PyPI link match the released artifacts.
+- String responses (for example CSV exports) keep their line breaks.
+- `postStream` disconnects when the returned `Stream` is closed.
+- Compiled with `--release 11` so the jar cannot link newer JDK APIs; `Automatic-Module-Name: com.swfte.sdk`.
+
 ## [Unreleased]
 
 ### Fixed
@@ -121,6 +150,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/SwfteAI/swfte-java/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/SwfteAI/swfte-java/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/SwfteAI/swfte-java/releases/tag/v1.2.0
 [1.1.0]: https://github.com/SwfteAI/swfte-java/releases/tag/v1.1.0
 [1.0.0]: https://github.com/SwfteAI/swfte-java/releases/tag/v1.0.0
