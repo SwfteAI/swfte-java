@@ -232,6 +232,7 @@ public class HttpClient {
      */
     private HttpURLConnection createConnection(String url, String method, String callsite) throws IOException {
         HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        conn.setInstanceFollowRedirects(false);
         // HttpURLConnection doesn't natively support PATCH; use POST with X-HTTP-Method-Override
         if ("PATCH".equals(method)) {
             conn.setRequestMethod("POST");
@@ -479,4 +480,3 @@ public class HttpClient {
         throw new SwfteException("Request failed after " + client.getMaxRetries() + " attempts", lastException);
     }
 }
-

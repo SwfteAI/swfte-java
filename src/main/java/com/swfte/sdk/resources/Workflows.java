@@ -280,12 +280,26 @@ public class Workflows {
      */
     @SuppressWarnings("unchecked")
     public WorkflowInvocation invoke(String workflowId, Map<String, Object> inputs, CallSite callsite) {
+        return invokeAtVersion(workflowId, inputs, callsite, null);
+    }
+
+    /** Invoke the selected immutable published snapshot without following promotion. */
+    public WorkflowInvocation invokeVersion(String workflowId, int version, Map<String, Object> inputs) {
+        return invokeVersion(workflowId, version, inputs, null);
+    }
+    public WorkflowInvocation invokeVersion(String workflowId, int version, Map<String, Object> inputs, CallSite callsite) {
+        if (version < 1) throw new SwfteException("version must be a positive integer");
+        return invokeAtVersion(workflowId, inputs, callsite, version);
+    }
+
+    @SuppressWarnings("unchecked")
+    private WorkflowInvocation invokeAtVersion(String workflowId, Map<String, Object> inputs, CallSite callsite, Integer version) {
         if (workflowId == null || workflowId.isEmpty()) {
             throw new SwfteException("workflowId is required");
         }
         Map<String, Object> res = httpClient.apiRequest(
             "POST",
-            getBaseUrl() + "/" + encode(workflowId) + "/invoke",
+            getBaseUrl() + "/" + encode(workflowId) + (version == null ? "" : "/versions/" + version) + "/invoke",
             inputs != null ? inputs : new HashMap<>(),
             Map.class,
             client.getCallsiteResolver().resolve(callsite)
@@ -389,6 +403,22 @@ public class Workflows {
             Map.class
         );
         return WorkflowExecution.fromStatusResponse(executionId, body);
+    }
+
+    public WorkflowExecution invokeVersionAndWait(String workflowId, int version, Map<String, Object> inputs) {
+        return invokeVersionAndWait(workflowId, version, inputs, 300000, 2000, false, null);
+    }
+    public WorkflowExecution invokeVersionAndWait(String workflowId, int version, Map<String, Object> inputs, CallSite callsite) {
+        return invokeVersionAndWait(workflowId, version, inputs, 300000, 2000, false, callsite);
+    }
+    public WorkflowExecution invokeVersionAndWait(String workflowId, int version, Map<String, Object> inputs,
+                                                  long timeoutMs, long pollIntervalMs, boolean throwOnPause) {
+        return invokeVersionAndWait(workflowId, version, inputs, timeoutMs, pollIntervalMs, throwOnPause, null);
+    }
+    public WorkflowExecution invokeVersionAndWait(String workflowId, int version, Map<String, Object> inputs,
+                                                  long timeoutMs, long pollIntervalMs, boolean throwOnPause, CallSite callsite) {
+        WorkflowInvocation invocation = invokeVersion(workflowId, version, inputs, callsite);
+        return pollUntilTerminal(invocation.getExecutionId(), timeoutMs, pollIntervalMs, throwOnPause);
     }
 
     private WorkflowExecution pollUntilTerminal(String executionId, long timeoutMs, long pollIntervalMs, boolean throwOnPause) {
@@ -681,7 +711,6 @@ public class Workflows {
         return result;
     }
 }
-
 
 
 

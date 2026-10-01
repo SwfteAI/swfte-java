@@ -40,6 +40,10 @@ public class ChatFlows {
         this.httpClient = new HttpClient(client);
     }
 
+    private static String encode(String value) {
+        return java.net.URLEncoder.encode(value, java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20");
+    }
+
     private String base() { return "/v2/chatflows"; }
     private String builderBase() { return "/v2/chatflows/builder"; }
 
@@ -203,10 +207,14 @@ public class ChatFlows {
 
         @SuppressWarnings("unchecked")
         public Map<String, Object> test(String chatFlowId, Map<String, Object> input) {
-            return httpClient.postWithCustomBase(
-                builderBase() + "/" + chatFlowId + "/test",
+            return test(chatFlowId, input, null);
+        }
+        @SuppressWarnings("unchecked")
+        public Map<String, Object> test(String chatFlowId, Map<String, Object> input, CallSite callsite) {
+            return httpClient.apiRequest("POST",
+                builderBase() + "/" + encode(chatFlowId) + "/test",
                 input != null ? input : new HashMap<>(),
-                Map.class
+                Map.class, client.getCallsiteResolver().resolve(callsite)
             );
         }
 
