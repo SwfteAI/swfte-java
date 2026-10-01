@@ -343,9 +343,12 @@ class PostHelperReplayTest {
                 Endpoint sink = normal("{\"ok\":true}");
                 Endpoint source = endpoint(false, status, "{}".getBytes(StandardCharsets.UTF_8), "application/json", sink.url() + "/sink");
                 final int operation = kind;
-                assertThrows(SwfteException.class, () -> jsonCall(client(source, 3), operation));
+                SwfteException refusal = null;
+                try { jsonCall(client(source, 3), operation); }
+                catch (SwfteException refused) { refusal = refused; }
                 assertEquals(0, sink.hits.size(), "central POST disclosed body or credentials across origins");
                 consumedOnce(source);
+                assertNotNull(refusal, "central POST redirect must retain an error");
             }
         }
     }
