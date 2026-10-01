@@ -119,6 +119,12 @@ public class HttpClient {
                     try (OutputStream os = conn.getOutputStream()) {
                         os.write(payload);
                     }
+                } else if ("POST".equals(conn.getRequestMethod())) {
+                    // Empty POSTs can still cause side effects; do not let the
+                    // JDK buffer, repeat or redirect them after a lost response.
+                    conn.setDoOutput(true);
+                    conn.setFixedLengthStreamingMode(0);
+                    conn.getOutputStream().close();
                 } else {
                     conn.setDoOutput(false);
                 }
@@ -243,7 +249,15 @@ public class HttpClient {
      * Make a POST request with multipart form data.
      */
     public <T> T postMultipart(String path, Map<String, Object> fields, Class<T> responseType) {
-        String url = client.getBaseUrl() + path;
+        return postMultipartUrl(client.getBaseUrl() + path, path, fields, responseType);
+    }
+
+    /** Multipart POST against the agents-service root, never the gateway. */
+    public <T> T postMultipartWithCustomBase(String path, Map<String, Object> fields, Class<T> responseType) {
+        return postMultipartUrl(client.getApiBaseUrl() + path, path, fields, responseType);
+    }
+
+    private <T> T postMultipartUrl(String url, String path, Map<String, Object> fields, Class<T> responseType) {
         String boundary = "----SwfteBoundary" + System.currentTimeMillis();
         
         try {
@@ -398,6 +412,10 @@ public class HttpClient {
                 try (OutputStream os = conn.getOutputStream()) {
                     os.write(bytes);
                 }
+            } else if ("POST".equals(conn.getRequestMethod())) {
+                conn.setDoOutput(true);
+                conn.setFixedLengthStreamingMode(0);
+                conn.getOutputStream().close();
             } else {
                 conn.setDoOutput(false);
             }

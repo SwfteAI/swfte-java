@@ -81,6 +81,13 @@ class ReleaseShapeTest {
     }
 
     @Test
+    void ciHasExplicitReadOnlyContentsPermission() throws IOException {
+        String ci = read(".github/workflows/ci.yml");
+        assertTrue(Pattern.compile("(?m)^permissions:\\n  contents: read\\n").matcher(ci).find());
+        assertFalse(Pattern.compile("\\b(?:contents|id-token|actions|packages): write\\b").matcher(ci).find());
+    }
+
+    @Test
     void githubReleaseRunsInItsOwnJobAwayFromTheSigningKey() throws IOException {
         String wf = read(".github/workflows/release.yml");
         int publish = wf.indexOf("\n  publish:");

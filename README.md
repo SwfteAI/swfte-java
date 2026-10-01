@@ -345,7 +345,7 @@ SwfteClient client = SwfteClient.builder()
     .apiKey("sk-swfte-...")                   // Required. Also reads SWFTE_API_KEY env var.
     .baseUrl("https://api.swfte.com/agents/v2/gateway")  // Default
     .timeout(60000)                            // Request timeout in ms
-    .maxRetries(3)                             // Retry count for failed requests
+    .maxRetries(3)                             // Attempts only for idempotent requests
     .workspaceId("ws-...")                     // Workspace scoping. Also reads SWFTE_WORKSPACE_ID.
     // .apiBaseUrl("https://api.swfte.com/agents")  // Optional; derived from baseUrl
     .build();
@@ -423,9 +423,16 @@ All contributors must sign the [Swfte CLA](https://cla.swfte.com) before their f
   they are idempotent: GET/HEAD, or a write sent with an `Idempotency-Key`. A 4xx (including
   401/403/429) is never retried, and a POST/PUT/PATCH/DELETE without an idempotency key is sent
   exactly once, so a call that may already have run is never repeated.
+  Streaming chat and speech JSON use fixed-length writes; multipart audio/file
+  uploads use chunked writes. These streaming modes prevent the JDK from
+  silently buffering and replaying a POST after a response-side disconnect.
+  A POST with a null body uses zero-length streaming for the same protection.
+  File uploads use `apiBaseUrl`; audio uploads use the gateway `baseUrl`.
 - **Timeouts.** Every request has connect and read timeouts (`timeout`, 60000 ms by default).
-- **Redirects.** Redirects use `HttpURLConnection` defaults, which do not forward the
-  `Authorization` header to a different origin.
+- **Redirects.** POST requests use streaming mode and refuse automatic redirects,
+  including 302 and 307, so request bodies are never forwarded to another origin.
+  Configure the final endpoint URL. Other methods retain `HttpURLConnection`
+  redirect behavior.
 
 To report a vulnerability, please see [SECURITY.md](SECURITY.md). Do not open a public issue for security concerns.
 

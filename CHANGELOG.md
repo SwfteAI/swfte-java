@@ -19,8 +19,12 @@ published; 1.2.0 supersedes them.
   other 4xx `ApiException`); only connection errors, timeouts and 5xx are retried, and only for
   GET/HEAD or a request sent with an idempotency key (new
   `request(..., idempotencyKey)` / `requestWithCustomBase(..., idempotencyKey)` overloads).
-  Bodies are sent in fixed-length streaming mode so `HttpURLConnection` cannot re-send a POST
-  on its own. `maxRetries(0)` now makes one attempt instead of failing without sending.
+  JSON bodies, including streaming chat and byte-response speech calls, use
+  fixed-length streaming; multipart audio and file uploads use chunked streaming.
+  Both modes prevent `HttpURLConnection` from re-sending a consumed POST on its
+  own, outside the SDK retry loop. Null-body POSTs use zero-length streaming;
+  these POST paths refuse automatic redirects. `maxRetries(0)` now makes one attempt instead
+  of failing without sending.
 - Release workflow: actions pinned to full commit SHAs, GitHub Release step moved into its own
   job (away from the GPG key and Central token), publish only from `main`, the "already on
   Central" check reads repo1.maven.org (fail closed) instead of the lagging search index.
@@ -30,6 +34,8 @@ published; 1.2.0 supersedes them.
 - `User-Agent` reports the real version (was hard-coded `swfte-java/1.0.0`); the pom is the
   only place it is written (`SdkVersion`).
 - README install snippets and PyPI link match the released artifacts.
+- Public single and batch file uploads use the agents-service `apiBaseUrl`,
+  preserving gateway routing for audio transcription.
 - String responses (for example CSV exports) keep their line breaks.
 - `postStream` disconnects when the returned `Stream` is closed.
 - Compiled with `--release 11` so the jar cannot link newer JDK APIs; `Automatic-Module-Name: com.swfte.sdk`.
