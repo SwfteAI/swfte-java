@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Workflows API resource for managing workflows.
@@ -63,6 +64,7 @@ import java.util.Map;
  * }</pre>
  */
 public class Workflows {
+    private static final Pattern SEMANTIC_VERSION = Pattern.compile("^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$");
     
     private final HttpClient httpClient;
     private final SwfteClient client;
@@ -289,17 +291,28 @@ public class Workflows {
     }
     public WorkflowInvocation invokeVersion(String workflowId, int version, Map<String, Object> inputs, CallSite callsite) {
         if (version < 1) throw new SwfteException("version must be a positive integer");
+        return invokeAtVersion(workflowId, inputs, callsite, Integer.toString(version));
+    }
+
+    /** Invoke an exact server-assigned semantic version. The pin is never trimmed or moved to live. */
+    public WorkflowInvocation invokeVersion(String workflowId, String version, Map<String, Object> inputs) {
+        return invokeVersion(workflowId, version, inputs, null);
+    }
+    public WorkflowInvocation invokeVersion(String workflowId, String version, Map<String, Object> inputs, CallSite callsite) {
+        if (version == null || version.length() > 128 || !SEMANTIC_VERSION.matcher(version).matches()) {
+            throw new SwfteException("version must be a bounded semantic version string");
+        }
         return invokeAtVersion(workflowId, inputs, callsite, version);
     }
 
     @SuppressWarnings("unchecked")
-    private WorkflowInvocation invokeAtVersion(String workflowId, Map<String, Object> inputs, CallSite callsite, Integer version) {
+    private WorkflowInvocation invokeAtVersion(String workflowId, Map<String, Object> inputs, CallSite callsite, String version) {
         if (workflowId == null || workflowId.isEmpty()) {
             throw new SwfteException("workflowId is required");
         }
         Map<String, Object> res = httpClient.apiRequest(
             "POST",
-            getBaseUrl() + "/" + encode(workflowId) + (version == null ? "" : "/versions/" + version) + "/invoke",
+            getBaseUrl() + "/" + encode(workflowId) + (version == null ? "" : "/versions/" + encode(version)) + "/invoke",
             inputs != null ? inputs : new HashMap<>(),
             Map.class,
             client.getCallsiteResolver().resolve(callsite)
@@ -416,6 +429,22 @@ public class Workflows {
         return invokeVersionAndWait(workflowId, version, inputs, timeoutMs, pollIntervalMs, throwOnPause, null);
     }
     public WorkflowExecution invokeVersionAndWait(String workflowId, int version, Map<String, Object> inputs,
+                                                  long timeoutMs, long pollIntervalMs, boolean throwOnPause, CallSite callsite) {
+        WorkflowInvocation invocation = invokeVersion(workflowId, version, inputs, callsite);
+        return pollUntilTerminal(invocation.getExecutionId(), timeoutMs, pollIntervalMs, throwOnPause);
+    }
+
+    public WorkflowExecution invokeVersionAndWait(String workflowId, String version, Map<String, Object> inputs) {
+        return invokeVersionAndWait(workflowId, version, inputs, 300000, 2000, false, null);
+    }
+    public WorkflowExecution invokeVersionAndWait(String workflowId, String version, Map<String, Object> inputs, CallSite callsite) {
+        return invokeVersionAndWait(workflowId, version, inputs, 300000, 2000, false, callsite);
+    }
+    public WorkflowExecution invokeVersionAndWait(String workflowId, String version, Map<String, Object> inputs,
+                                                  long timeoutMs, long pollIntervalMs, boolean throwOnPause) {
+        return invokeVersionAndWait(workflowId, version, inputs, timeoutMs, pollIntervalMs, throwOnPause, null);
+    }
+    public WorkflowExecution invokeVersionAndWait(String workflowId, String version, Map<String, Object> inputs,
                                                   long timeoutMs, long pollIntervalMs, boolean throwOnPause, CallSite callsite) {
         WorkflowInvocation invocation = invokeVersion(workflowId, version, inputs, callsite);
         return pollUntilTerminal(invocation.getExecutionId(), timeoutMs, pollIntervalMs, throwOnPause);
