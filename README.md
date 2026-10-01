@@ -97,15 +97,21 @@ ChatResponse response = client.chat().completions().create(
 ### Streaming
 
 ```java
-Stream<String> stream = client.chat().completions().createStream(
-    ChatRequest.builder()
-        .model("openai:gpt-4")
-        .messages(List.of(new Message("user", "Write a short poem.")))
-        .stream(true)
-        .build()
-);
+import com.swfte.sdk.models.ChatChunk;
+import java.util.stream.Stream;
 
-stream.forEach(chunk -> System.out.print(chunk));
+try (Stream<ChatChunk> stream = client.chat().completions().createStream(
+        ChatRequest.builder()
+            .model("openai:gpt-4")
+            .messages(List.of(new Message("user", "Write a short poem.")))
+            .stream(true)
+            .build())) {
+    stream.forEach(chunk -> chunk.getChoices().forEach(choice -> {
+        if (choice.getDelta() != null && choice.getDelta().getContent() != null) {
+            System.out.print(choice.getDelta().getContent());
+        }
+    }));
+}
 ```
 
 ### Agents
