@@ -210,8 +210,11 @@ public class HttpClient {
             // Don't set Accept header - let the server determine response type
 
             String jsonBody = objectMapper.writeValueAsString(body);
+            byte[] streamPayload = jsonBody.getBytes(StandardCharsets.UTF_8);
+            // Streaming mode disables the JDK's hidden buffered-POST replay.
+            conn.setFixedLengthStreamingMode(streamPayload.length);
             try (OutputStream os = conn.getOutputStream()) {
-                os.write(jsonBody.getBytes(StandardCharsets.UTF_8));
+                os.write(streamPayload);
             }
             
             int responseCode = conn.getResponseCode();
@@ -256,7 +259,9 @@ public class HttpClient {
             if (client.getWorkspaceId() != null) {
                 conn.setRequestProperty("X-Workspace-ID", client.getWorkspaceId());
             }
-            
+
+            // Write multipart incrementally without buffering a replayable POST.
+            conn.setChunkedStreamingMode(8192);
             try (OutputStream os = conn.getOutputStream()) {
                 for (Map.Entry<String, Object> entry : fields.entrySet()) {
                     os.write(("--" + boundary + "\r\n").getBytes(StandardCharsets.UTF_8));
@@ -297,10 +302,13 @@ public class HttpClient {
         
         try {
             HttpURLConnection conn = createConnection(url, "POST");
-            
+
             String jsonBody = objectMapper.writeValueAsString(body);
+            byte[] bytesPayload = jsonBody.getBytes(StandardCharsets.UTF_8);
+            // Keep byte-response calls subject to the same no-replay policy.
+            conn.setFixedLengthStreamingMode(bytesPayload.length);
             try (OutputStream os = conn.getOutputStream()) {
-                os.write(jsonBody.getBytes(StandardCharsets.UTF_8));
+                os.write(bytesPayload);
             }
             
             int responseCode = conn.getResponseCode();
