@@ -1,6 +1,7 @@
 package com.swfte.sdk.resources;
 
 import com.swfte.sdk.CallSite;
+import com.swfte.sdk.exceptions.SwfteException;
 import com.swfte.sdk.SwfteClient;
 import com.swfte.sdk.HttpClient;
 import com.swfte.sdk.models.ChatFlow;
@@ -38,6 +39,19 @@ public class ChatFlows {
     public ChatFlows(SwfteClient client) {
         this.client = client;
         this.httpClient = new HttpClient(client);
+    }
+
+
+    private static String routeSegment(String value) {
+        if (value == null || value.isEmpty() || value.equals(".") || value.equals("..")) throw new SwfteException("identifier must be a nonempty raw route identity");
+        for (int i=0;i<value.length();i++) {
+            char code=value.charAt(i);
+            if (code < 32 || code == 127) throw new SwfteException("identifier contains control characters");
+            if (Character.isHighSurrogate(code)) {
+                if (++i >= value.length() || !Character.isLowSurrogate(value.charAt(i))) throw new SwfteException("identifier contains malformed Unicode");
+            } else if (Character.isLowSurrogate(code)) throw new SwfteException("identifier contains malformed Unicode");
+        }
+        return encode(value);
     }
 
     private static String encode(String value) {
@@ -118,7 +132,7 @@ public class ChatFlows {
     public ChatFlowSession startSession(String chatFlowId, Map<String, Object> context, CallSite callsite) {
         return httpClient.requestWithCustomBase(
             "POST",
-            base() + "/" + chatFlowId + "/sessions",
+            base() + "/" + routeSegment(chatFlowId) + "/sessions",
             context != null ? context : new HashMap<>(),
             ChatFlowSession.class,
             client.getCallsiteResolver().resolve(callsite)
@@ -128,18 +142,18 @@ public class ChatFlows {
     /** List sessions for a chatflow. */
     @SuppressWarnings("unchecked")
     public Map<String, Object> listSessions(String chatFlowId) {
-        return httpClient.getWithCustomBase(base() + "/" + chatFlowId + "/sessions", Map.class);
+        return httpClient.getWithCustomBase(base() + "/" + routeSegment(chatFlowId) + "/sessions", Map.class);
     }
 
     /** Get aggregate session stats for a chatflow. */
     @SuppressWarnings("unchecked")
     public Map<String, Object> stats(String chatFlowId) {
-        return httpClient.getWithCustomBase(base() + "/" + chatFlowId + "/stats", Map.class);
+        return httpClient.getWithCustomBase(base() + "/" + routeSegment(chatFlowId) + "/stats", Map.class);
     }
 
     /** Get a single session by id. */
     public ChatFlowSession getSession(String sessionId) {
-        return httpClient.getWithCustomBase(base() + "/sessions/" + sessionId, ChatFlowSession.class);
+        return httpClient.getWithCustomBase(base() + "/sessions/" + routeSegment(sessionId), ChatFlowSession.class);
     }
 
     /**
@@ -212,7 +226,7 @@ public class ChatFlows {
         @SuppressWarnings("unchecked")
         public Map<String, Object> test(String chatFlowId, Map<String, Object> input, CallSite callsite) {
             return httpClient.apiRequest("POST",
-                builderBase() + "/" + encode(chatFlowId) + "/test",
+                builderBase() + "/" + routeSegment(chatFlowId) + "/test",
                 input != null ? input : new HashMap<>(),
                 Map.class, client.getCallsiteResolver().resolve(callsite)
             );

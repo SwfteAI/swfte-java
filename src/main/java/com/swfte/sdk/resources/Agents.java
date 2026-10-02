@@ -263,12 +263,25 @@ public class Agents {
         }
         Map<String, Object> raw = httpClient.apiRequest(
             "POST",
-            getBaseUrl() + "/" + encode(agentId) + "/chat/" + encode(opts.getUserId()),
+            getBaseUrl() + "/" + routeSegment(agentId) + "/chat/" + routeSegment(opts.getUserId()),
             body,
             Map.class,
             client.getCallsiteResolver().resolve(callsite)
         );
         return AgentChatResponse.fromMap(raw);
+    }
+
+
+    private static String routeSegment(String value) {
+        if (value == null || value.isEmpty() || value.equals(".") || value.equals("..")) throw new SwfteException("identifier must be a nonempty raw route identity");
+        for (int i=0;i<value.length();i++) {
+            char code=value.charAt(i);
+            if (code < 32 || code == 127) throw new SwfteException("identifier contains control characters");
+            if (Character.isHighSurrogate(code)) {
+                if (++i >= value.length() || !Character.isLowSurrogate(value.charAt(i))) throw new SwfteException("identifier contains malformed Unicode");
+            } else if (Character.isLowSurrogate(code)) throw new SwfteException("identifier contains malformed Unicode");
+        }
+        return encode(value);
     }
 
     private static String encode(String segment) {

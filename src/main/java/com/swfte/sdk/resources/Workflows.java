@@ -64,7 +64,8 @@ import java.util.regex.Pattern;
  * }</pre>
  */
 public class Workflows {
-    private static final Pattern SEMANTIC_VERSION = Pattern.compile("^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$");
+    private static final Pattern VERSION_PIN = Pattern.compile("[A-Za-z0-9_.:@+-]+");
+    private static final Pattern VERSION_ALNUM = Pattern.compile("[A-Za-z0-9]");
     
     private final HttpClient httpClient;
     private final SwfteClient client;
@@ -249,9 +250,10 @@ public class Workflows {
      *                 opt-in stack capture (see {@link com.swfte.sdk.CallsiteResolver})
      */
     public WorkflowExecution execute(String workflowId, Map<String, Object> inputs, boolean skipValidation, CallSite callsite) {
+        validateWorkflowId(workflowId);
         String url = skipValidation
-            ? getBaseUrl() + "/" + workflowId + "/execute?skipValidation=true"
-            : getBaseUrl() + "/" + workflowId + "/execute";
+            ? getBaseUrl() + "/" + encode(workflowId) + "/execute?skipValidation=true"
+            : getBaseUrl() + "/" + encode(workflowId) + "/execute";
 
         return httpClient.requestWithCustomBase("POST", url, inputs != null ? inputs : new HashMap<>(), WorkflowExecution.class,
             client.getCallsiteResolver().resolve(callsite));
@@ -294,22 +296,26 @@ public class Workflows {
         return invokeAtVersion(workflowId, inputs, callsite, Integer.toString(version));
     }
 
-    /** Invoke an exact server-assigned semantic version. The pin is never trimmed or moved to live. */
+    /** Invoke an exact published server label. Safe syntax grants no publication authority; the pin is never trimmed or moved to live. */
     public WorkflowInvocation invokeVersion(String workflowId, String version, Map<String, Object> inputs) {
         return invokeVersion(workflowId, version, inputs, null);
     }
     public WorkflowInvocation invokeVersion(String workflowId, String version, Map<String, Object> inputs, CallSite callsite) {
-        if (version == null || version.length() > 128 || !SEMANTIC_VERSION.matcher(version).matches()) {
-            throw new SwfteException("version must be a bounded semantic version string");
+        if (version == null || version.length() < 1 || version.length() > 128 || !VERSION_PIN.matcher(version).matches() || !VERSION_ALNUM.matcher(version).find()) {
+            throw new SwfteException("version must be a bounded safe server version label");
         }
         return invokeAtVersion(workflowId, inputs, callsite, version);
     }
 
     @SuppressWarnings("unchecked")
-    private WorkflowInvocation invokeAtVersion(String workflowId, Map<String, Object> inputs, CallSite callsite, String version) {
-        if (workflowId == null || workflowId.isEmpty()) {
-            throw new SwfteException("workflowId is required");
+    private static void validateWorkflowId(String workflowId) {
+        if (workflowId == null || workflowId.length() < 1 || workflowId.length() > 128 || workflowId.equals(".") || workflowId.equals("..") || !workflowId.matches("[A-Za-z0-9_.@:-]+")) {
+            throw new SwfteException("workflowId must be a raw bounded safe artifact identifier");
         }
+    }
+
+    private WorkflowInvocation invokeAtVersion(String workflowId, Map<String, Object> inputs, CallSite callsite, String version) {
+        validateWorkflowId(workflowId);
         Map<String, Object> res = httpClient.apiRequest(
             "POST",
             getBaseUrl() + "/" + encode(workflowId) + (version == null ? "" : "/versions/" + encode(version)) + "/invoke",
