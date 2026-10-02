@@ -155,6 +155,7 @@
                 <version>3.6.2</version>
                 <configuration>
                     <javadocDirectory>${project.basedir}/src/main/legal</javadocDirectory>
+                    <docfilessubdirs>true</docfilessubdirs>
                 </configuration>
                 <executions>
                     <execution>

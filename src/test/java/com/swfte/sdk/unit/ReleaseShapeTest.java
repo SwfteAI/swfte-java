@@ -118,6 +118,7 @@ class ReleaseShapeTest {
         assertTrue(Files.isRegularFile(legal), "the SDK's own compiled output must carry its license resource");
         assertArrayEquals(Files.readAllBytes(Paths.get("LICENSE")), Files.readAllBytes(legal));
         assertEquals(read("LICENSE"), read("src/main/legal/LICENSE"));
+        assertEquals(read("LICENSE"), read("src/main/legal/resources/LICENSE"));
     }
 
     @Test

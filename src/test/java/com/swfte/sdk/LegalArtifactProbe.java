@@ -20,6 +20,7 @@ public final class LegalArtifactProbe {
             try (JarFile jar = new JarFile(path)) {
                 JarEntry legal = jar.getJarEntry("META-INF/LICENSE");
                 if (legal == null) legal = jar.getJarEntry("LICENSE");
+                if (legal == null) legal = jar.getJarEntry("resources/LICENSE");
                 if (legal == null || legal.isDirectory()) throw new AssertionError(path + " is missing LICENSE");
                 try (InputStream input = jar.getInputStream(legal)) {
                     if (!Arrays.equals(expected, input.readAllBytes())) throw new AssertionError(path + " has different license bytes");
