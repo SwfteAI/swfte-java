@@ -18,7 +18,11 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Spliterators;
+import java.util.Spliterator;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 /**
  * HTTP client for making API requests.
@@ -27,9 +31,22 @@ public class HttpClient {
     
     private final SwfteClient client;
     private final ObjectMapper objectMapper;
+    private final CredentialRedactor redactor;
+    private final ConnectionFactory connections;
+
+    @FunctionalInterface
+    interface ConnectionFactory {
+        HttpURLConnection open(String url) throws IOException;
+    }
     
     public HttpClient(SwfteClient client) {
+        this(client, url -> (HttpURLConnection) new URL(url).openConnection());
+    }
+
+    HttpClient(SwfteClient client, ConnectionFactory connections) {
         this.client = client;
+        this.connections = connections;
+        this.redactor = new CredentialRedactor(client.getApiKey());
         this.objectMapper = new ObjectMapper();
         this.objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
     }
@@ -100,7 +117,7 @@ public class HttpClient {
             try {
                 payload = objectMapper.writeValueAsBytes(body);
             } catch (JsonProcessingException e) {
-                throw new SwfteException("Could not serialize request body: " + method + " " + path, e);
+                throw new SwfteException(redactor.text("Could not serialize request body: " + method + " " + path), redactor.cause(e));
             }
         }
 
@@ -156,12 +173,12 @@ public class HttpClient {
             } catch (SwfteException e) {
                 throw e;
             } catch (JsonProcessingException e) {
-                throw new SwfteException("Invalid response body: " + method + " " + path, e);
+                throw new SwfteException(redactor.text("Invalid response body: " + method + " " + path), redactor.cause(e));
             } catch (IOException e) {
                 if (lastAttempt) {
                     String what = e instanceof java.net.SocketTimeoutException ? "Request timed out: " : "Request failed: ";
-                    throw new SwfteException(what + method + " " + path
-                        + (attempts > 1 ? " (after " + attempts + " attempts)" : ""), e);
+                    throw new SwfteException(redactor.text(what + method + " " + path
+                        + (attempts > 1 ? " (after " + attempts + " attempts)" : "")), redactor.cause(e));
                 }
             } finally {
                 if (conn != null) {
@@ -173,16 +190,16 @@ public class HttpClient {
                 Thread.sleep(retryAfterMs >= 0 ? retryAfterMs : (long) Math.pow(2, attempt) * 100);
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
-                throw new SwfteException("Request interrupted", ie);
+                throw new SwfteException("Request interrupted", redactor.cause(ie));
             }
         }
     }
 
     /** Map a non-2xx response to its typed exception. Reads the error body. */
     private SwfteException errorFor(HttpURLConnection conn, int code, String method, String path) {
-        String errorBody = readErrorStream(conn);
-        String message = "API error: " + code + " " + method + " " + path
-            + (errorBody.isEmpty() ? "" : " - " + errorBody);
+        String errorBody = redactor.text(readErrorStream(conn));
+        String message = redactor.text("API error: " + code + " " + method + " " + path
+            + (errorBody.isEmpty() ? "" : " - " + errorBody));
         if (code == 401 || code == 403) {
             return new AuthenticationException(message);
         }
@@ -210,9 +227,10 @@ public class HttpClient {
      */
     public Stream<String> postStream(String path, Object body) {
         String url = client.getBaseUrl() + path;
-        
+        HttpURLConnection conn = null;
+        boolean handedOff = false;
         try {
-            HttpURLConnection conn = createConnection(url, "POST");
+            conn = createConnection(url, "POST");
             // Don't set Accept header - let the server determine response type
 
             String jsonBody = objectMapper.writeValueAsString(body);
@@ -233,15 +251,64 @@ public class HttpClient {
                 new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8)
             );
             
-            // Handle both "data:" and "data: " formats
-            return reader.lines()
-                .filter(line -> line.startsWith("data:"))
-                .map(line -> line.substring(5).stripLeading())  // Remove "data:" prefix and leading whitespace
-                .filter(data -> !data.equals("[DONE]"))
-                .onClose(conn::disconnect);
-                
+            HttpURLConnection streamConnection = conn;
+            Spliterator<String> frames = new Spliterators.AbstractSpliterator<String>(Long.MAX_VALUE, Spliterator.ORDERED) {
+                private boolean finished;
+
+                private void closeReader() {
+                    finished = true;
+                    try {
+                        reader.close();
+                    } catch (IOException error) {
+                        throw new SwfteException("Streaming reader close failed", redactor.cause(error));
+                    } finally {
+                        streamConnection.disconnect();
+                    }
+                }
+
+                @Override
+                public boolean tryAdvance(Consumer<? super String> action) {
+                    if (finished) return false;
+                    String data;
+                    try {
+                        String line;
+                        do {
+                            line = reader.readLine();
+                            if (line == null) { closeReader(); return false; }
+                        } while (!line.startsWith("data:"));
+                        data = line.substring(5).stripLeading();
+                        if (data.equals("[DONE]")) { closeReader(); return false; }
+                        try {
+                            com.fasterxml.jackson.databind.JsonNode envelope = objectMapper.readTree(data);
+                            if (envelope != null && envelope.isObject() && envelope.hasNonNull("error")) {
+                                throw new ApiException(redactor.text("Streaming API error: " + data), 500, redactor.text(data));
+                            }
+                        } catch (JsonProcessingException ignored) {
+                            // Keep the existing resource parser's handling of non-JSON frames.
+                        }
+                    } catch (IOException error) {
+                        SwfteException safe = new SwfteException("Streaming reader failed", redactor.cause(error));
+                        try { closeReader(); } catch (SwfteException closeError) { safe.addSuppressed(closeError); }
+                        throw safe;
+                    } catch (SwfteException error) {
+                        try { closeReader(); } catch (SwfteException closeError) { error.addSuppressed(closeError); }
+                        throw error;
+                    }
+                    action.accept(data); // Successful chunks stay intact; callers own their callbacks.
+                    return true;
+                }
+            };
+            Stream<String> stream = StreamSupport.stream(frames, false).onClose(() -> {
+                try { reader.close(); }
+                catch (IOException error) { throw new SwfteException("Streaming reader close failed", redactor.cause(error)); }
+                finally { streamConnection.disconnect(); }
+            });
+            handedOff = true;
+            return stream;
         } catch (IOException e) {
-            throw new SwfteException("Streaming request failed", e);
+            throw new SwfteException(redactor.text("Streaming request failed: " + path), redactor.cause(e));
+        } finally {
+            if (!handedOff && conn != null) conn.disconnect();
         }
     }
     
@@ -259,9 +326,9 @@ public class HttpClient {
 
     private <T> T postMultipartUrl(String url, String path, Map<String, Object> fields, Class<T> responseType) {
         String boundary = "----SwfteBoundary" + System.currentTimeMillis();
-        
+        HttpURLConnection conn = null;
         try {
-            HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+            conn = connections.open(url);
             conn.setRequestMethod("POST");
             conn.setDoOutput(true);
             conn.setConnectTimeout(client.getTimeout());
@@ -304,7 +371,9 @@ public class HttpClient {
             return objectMapper.readValue(responseBody, responseType);
             
         } catch (IOException e) {
-            throw new SwfteException("Multipart request failed", e);
+            throw new SwfteException(redactor.text("Multipart request failed: " + path), redactor.cause(e));
+        } finally {
+            if (conn != null) conn.disconnect();
         }
     }
     
@@ -313,9 +382,9 @@ public class HttpClient {
      */
     public byte[] postBytes(String path, Object body) {
         String url = client.getBaseUrl() + path;
-        
+        HttpURLConnection conn = null;
         try {
-            HttpURLConnection conn = createConnection(url, "POST");
+            conn = createConnection(url, "POST");
 
             String jsonBody = objectMapper.writeValueAsString(body);
             byte[] bytesPayload = jsonBody.getBytes(StandardCharsets.UTF_8);
@@ -334,12 +403,14 @@ public class HttpClient {
             return conn.getInputStream().readAllBytes();
             
         } catch (IOException e) {
-            throw new SwfteException("Request failed", e);
+            throw new SwfteException(redactor.text("Request failed: " + path), redactor.cause(e));
+        } finally {
+            if (conn != null) conn.disconnect();
         }
     }
     
     private HttpURLConnection createConnection(String url, String method) throws IOException {
-        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        HttpURLConnection conn = connections.open(url);
         // HttpURLConnection doesn't natively support PATCH; use POST with X-HTTP-Method-Override
         if ("PATCH".equals(method)) {
             conn.setRequestMethod("POST");
@@ -395,7 +466,7 @@ public class HttpClient {
      * {@link HttpURLConnection} from transparently re-sending a POST.</p>
      *
      * <p>Errors: 401/403 {@link AuthenticationException}, 429 {@link RateLimitException},
-     * any other non-2xx {@link ApiException} (status code and raw body).</p>
+     * any other non-2xx {@link ApiException} (status code and credential-safe body).</p>
      *
      * @param path path (and query) relative to the API root, starting with {@code /}
      * @return the parsed body, or {@code null} for an empty body
@@ -436,9 +507,9 @@ public class HttpClient {
         } catch (SwfteException e) {
             throw e;
         } catch (java.net.SocketTimeoutException e) {
-            throw new SwfteException("Request timed out: " + method + " " + path, e);
+            throw new SwfteException(redactor.text("Request timed out: " + method + " " + path), redactor.cause(e));
         } catch (IOException e) {
-            throw new SwfteException("Request failed: " + method + " " + path, e);
+            throw new SwfteException(redactor.text("Request failed: " + method + " " + path), redactor.cause(e));
         } finally {
             if (conn != null) {
                 conn.disconnect();

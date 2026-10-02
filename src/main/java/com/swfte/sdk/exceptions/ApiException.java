@@ -21,7 +21,7 @@ public class ApiException extends SwfteException {
         return statusCode;
     }
 
-    /** The raw error body returned by the server, when available. */
+    /** The error body when available, with this client's echoed credential removed. */
     public String getResponseBody() {
         return responseBody;
     }

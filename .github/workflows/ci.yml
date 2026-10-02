@@ -30,11 +30,3 @@ jobs:
 
       - name: Build and test with Maven
         run: mvn verify -B
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: ./target/site/jacoco/jacoco.xml
-          flags: java-${{ matrix.java-version }}
-          fail_ci_if_error: false

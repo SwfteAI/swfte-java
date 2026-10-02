@@ -109,4 +109,23 @@ class ReleaseShapeTest {
         assertTrue(wf.contains("repo1.maven.org/maven2/com/swfte/swfte-sdk/"));
         assertFalse(wf.contains("search.maven.org"));
     }
+
+    @Test
+    void runtimeLegalResourceContainsTheExactRootLicense() throws Exception {
+        // Generic class-loader resource lookup can resolve a dependency's LICENSE.
+        java.nio.file.Path legal = Paths.get(SdkVersion.class.getProtectionDomain()
+                .getCodeSource().getLocation().toURI()).resolve("META-INF/LICENSE");
+        assertTrue(Files.isRegularFile(legal), "the SDK's own compiled output must carry its license resource");
+        assertArrayEquals(Files.readAllBytes(Paths.get("LICENSE")), Files.readAllBytes(legal));
+        assertEquals(read("LICENSE"), read("src/main/legal/LICENSE"));
+    }
+
+    @Test
+    void ciDoesNotUploadAJaCoCoReportWithoutAGenerator() throws IOException {
+        String ci = read(".github/workflows/ci.yml");
+        assertFalse(ci.contains("codecov"));
+        assertFalse(ci.contains("jacoco.xml"));
+        assertTrue(ci.contains("mvn verify -B"));
+        assertTrue(ci.contains("java-version: [11, 17, 21]"));
+    }
 }

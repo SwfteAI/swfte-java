@@ -107,6 +107,12 @@
                     <include>com/swfte/sdk/sdk-version.properties</include>
                 </includes>
             </resource>
+            <resource>
+                <directory>src/main/legal</directory>
+                <filtering>false</filtering>
+                <targetPath>META-INF</targetPath>
+                <includes><include>LICENSE</include></includes>
+            </resource>
         </resources>
         <plugins>
             <plugin>
@@ -133,6 +139,7 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-source-plugin</artifactId>
                 <version>3.3.0</version>
+                <configuration><excludeResources>false</excludeResources></configuration>
                 <executions>
                     <execution>
                         <id>attach-sources</id>
@@ -146,6 +153,9 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-javadoc-plugin</artifactId>
                 <version>3.6.2</version>
+                <configuration>
+                    <javadocDirectory>${project.basedir}/src/main/legal</javadocDirectory>
+                </configuration>
                 <executions>
                     <execution>
                         <id>attach-javadocs</id>
