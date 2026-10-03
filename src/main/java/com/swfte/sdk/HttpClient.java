@@ -1,5 +1,6 @@
 package com.swfte.sdk;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.swfte.sdk.exceptions.AuthenticationException;
@@ -9,6 +10,7 @@ import com.swfte.sdk.exceptions.SwfteException;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -16,7 +18,11 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Spliterators;
+import java.util.Spliterator;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 /**
  * HTTP client for making API requests.
@@ -25,9 +31,22 @@ public class HttpClient {
     
     private final SwfteClient client;
     private final ObjectMapper objectMapper;
+    private final CredentialRedactor redactor;
+    private final ConnectionFactory connections;
+
+    @FunctionalInterface
+    interface ConnectionFactory {
+        HttpURLConnection open(String url) throws IOException;
+    }
     
     public HttpClient(SwfteClient client) {
+        this(client, url -> (HttpURLConnection) new URL(url).openConnection());
+    }
+
+    HttpClient(SwfteClient client, ConnectionFactory connections) {
         this.client = client;
+        this.connections = connections;
+        this.redactor = new CredentialRedactor(client.getApiKey());
         this.objectMapper = new ObjectMapper();
         this.objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
     }
@@ -47,97 +66,258 @@ public class HttpClient {
     }
     
     /**
-     * Make an HTTP request with retry logic.
+     * Make an HTTP request against the gateway base URL.
+     *
+     * <p>Retry policy (see {@link #execute}): never on any 4xx; only
+     * {@link IOException}s and 5xx responses are retried, and only for idempotent
+     * methods (GET/HEAD). Use {@link #request(String, String, Object, Class, String)}
+     * to retry a write that carries an idempotency key.</p>
      */
     public <T> T request(String method, String path, Object body, Class<T> responseType) {
-        String url = client.getBaseUrl() + path;
-        Exception lastException = null;
-        
-        for (int attempt = 0; attempt < client.getMaxRetries(); attempt++) {
+        return execute(client.getBaseUrl() + path, method, path, body, responseType, null);
+    }
+
+    /**
+     * Like {@link #request(String, String, Object, Class)}, but sends the given
+     * {@code Idempotency-Key} header, which makes the request safe to retry.
+     */
+    public <T> T request(String method, String path, Object body, Class<T> responseType, String idempotencyKey) {
+        return execute(client.getBaseUrl() + path, method, path, body, responseType, idempotencyKey);
+    }
+
+    /** GET and HEAD are safe to repeat; anything else needs an idempotency key. */
+    static boolean isRetriable(String method, String idempotencyKey) {
+        if (idempotencyKey != null && !idempotencyKey.isEmpty()) {
+            return true;
+        }
+        return "GET".equalsIgnoreCase(method) || "HEAD".equalsIgnoreCase(method);
+    }
+
+    /**
+     * The one request loop behind {@link #request} and {@link #requestWithCustomBase}.
+     *
+     * <ul>
+     *   <li>401/403 {@link AuthenticationException}, 429 {@link RateLimitException}
+     *       (with {@code Retry-After}), other 4xx {@link ApiException}: thrown at once,
+     *       never retried.</li>
+     *   <li>5xx and {@link IOException}: retried up to {@code maxRetries} attempts
+     *       (at least one), but only when {@link #isRetriable}; otherwise exactly one
+     *       attempt. A 5xx that survives the attempts is rethrown as its
+     *       {@link ApiException}.</li>
+     *   <li>Bodies are sent in fixed-length streaming mode so {@link HttpURLConnection}
+     *       cannot transparently re-send a POST on its own.</li>
+     *   <li>Redirects are never followed, for any method: every 3xx is an
+     *       {@link ApiException} (not retried), so the bearer key never reaches another host.</li>
+     * </ul>
+     */
+    private <T> T execute(String url, String method, String path, Object body, Class<T> responseType,
+                          String idempotencyKey) {
+        int attempts = isRetriable(method, idempotencyKey) ? Math.max(1, client.getMaxRetries()) : 1;
+
+        byte[] payload = null;
+        if (body != null && !"GET".equals(method) && !"DELETE".equals(method)) {
             try {
-                HttpURLConnection conn = createConnection(url, method);
-                
-                if (body != null) {
-                    String jsonBody = objectMapper.writeValueAsString(body);
-                    try (OutputStream os = conn.getOutputStream()) {
-                        os.write(jsonBody.getBytes(StandardCharsets.UTF_8));
-                    }
-                }
-                
-                int responseCode = conn.getResponseCode();
-                
-                if (responseCode == 401) {
-                    throw new AuthenticationException("Invalid API key");
-                } else if (responseCode == 429) {
-                    throw new RateLimitException("Rate limit exceeded");
-                } else if (responseCode >= 400) {
-                    String errorBody = readErrorStream(conn);
-                    throw new ApiException("API error: " + responseCode + " - " + errorBody, responseCode);
-                }
-                
-                if (responseType == String.class) {
-                    return responseType.cast(readResponseStream(conn));
-                }
-                
-                String responseBody = readResponseStream(conn);
-                return objectMapper.readValue(responseBody, responseType);
-                
-            } catch (AuthenticationException | RateLimitException e) {
-                throw e;
-            } catch (Exception e) {
-                lastException = e;
-                if (attempt < client.getMaxRetries() - 1) {
-                    try {
-                        Thread.sleep((long) Math.pow(2, attempt) * 100);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        throw new SwfteException("Request interrupted", ie);
-                    }
-                }
+                payload = objectMapper.writeValueAsBytes(body);
+            } catch (JsonProcessingException e) {
+                throw new SwfteException(redactor.text("Could not serialize request body: " + method + " " + path), redactor.cause(e));
             }
         }
-        
-        throw new SwfteException("Request failed after " + client.getMaxRetries() + " attempts", lastException);
+
+        for (int attempt = 0; ; attempt++) {
+            boolean lastAttempt = attempt + 1 >= attempts;
+            long retryAfterMs = -1;
+            HttpURLConnection conn = null;
+            try {
+                conn = createConnection(url, method);
+                if (idempotencyKey != null && !idempotencyKey.isEmpty()) {
+                    conn.setRequestProperty("Idempotency-Key", idempotencyKey);
+                }
+                if (payload != null) {
+                    conn.setDoOutput(true);
+                    conn.setFixedLengthStreamingMode(payload.length);
+                    try (OutputStream os = conn.getOutputStream()) {
+                        os.write(payload);
+                    }
+                } else if ("POST".equals(conn.getRequestMethod())) {
+                    // Empty POSTs can still cause side effects; do not let the
+                    // JDK buffer, repeat or redirect them after a lost response.
+                    conn.setDoOutput(true);
+                    conn.setFixedLengthStreamingMode(0);
+                    conn.getOutputStream().close();
+                } else {
+                    conn.setDoOutput(false);
+                }
+
+                int code = conn.getResponseCode();
+                if (code < 200 || code >= 300) {
+                    Long retryAfter = parseRetryAfterSeconds(conn.getHeaderField("Retry-After"));
+                    if (retryAfter != null) {
+                        retryAfterMs = Math.min(retryAfter, 30L) * 1000L;
+                    }
+                    throw errorFor(conn, code, method, path);
+                }
+
+                if (responseType == Void.class || code == 204) {
+                    return null;
+                }
+                String text = readResponseStream(conn);
+                if (responseType == String.class) {
+                    return responseType.cast(text);
+                }
+                if (text == null || text.isEmpty()) {
+                    return null;
+                }
+                return objectMapper.readValue(text, responseType);
+            } catch (ApiException e) {
+                if (e.getStatusCode() < 500 || lastAttempt) {
+                    throw e;
+                }
+            } catch (SwfteException e) {
+                throw e;
+            } catch (JsonProcessingException e) {
+                throw new SwfteException(redactor.text("Invalid response body: " + method + " " + path), redactor.cause(e));
+            } catch (IOException e) {
+                if (lastAttempt) {
+                    String what = e instanceof java.net.SocketTimeoutException ? "Request timed out: " : "Request failed: ";
+                    throw new SwfteException(redactor.text(what + method + " " + path
+                        + (attempts > 1 ? " (after " + attempts + " attempts)" : "")), redactor.cause(e));
+                }
+            } finally {
+                if (conn != null) {
+                    conn.disconnect();
+                }
+            }
+
+            try {
+                Thread.sleep(retryAfterMs >= 0 ? retryAfterMs : (long) Math.pow(2, attempt) * 100);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                throw new SwfteException("Request interrupted", redactor.cause(ie));
+            }
+        }
     }
-    
+
+    /** Map a non-2xx response to its typed exception. Reads the error body. */
+    private SwfteException errorFor(HttpURLConnection conn, int code, String method, String path) {
+        if (code >= 300 && code < 400) {
+            // Same refusal as swfte-node. The Location is deliberately not echoed or followed.
+            String message = redactor.text("Refusing to follow a redirect (" + code + ") for " + method + " " + path
+                + ": the API never redirects, and following would send your credentials elsewhere. "
+                + "Check baseUrl/apiBaseUrl.");
+            return new ApiException(message, code, "");
+        }
+        String errorBody = redactor.text(readErrorStream(conn));
+        String message = redactor.text("API error: " + code + " " + method + " " + path
+            + (errorBody.isEmpty() ? "" : " - " + errorBody));
+        if (code == 401 || code == 403) {
+            return new AuthenticationException(message);
+        }
+        if (code == 429) {
+            return new RateLimitException(message, parseRetryAfterSeconds(conn.getHeaderField("Retry-After")));
+        }
+        return new ApiException(message, code, errorBody);
+    }
+
+    /** {@code Retry-After} as whole seconds; null when absent or an HTTP-date. */
+    static Long parseRetryAfterSeconds(String header) {
+        if (header == null) {
+            return null;
+        }
+        try {
+            long v = Long.parseLong(header.trim());
+            return v < 0 ? null : v;
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
     /**
      * Make a streaming POST request.
      */
     public Stream<String> postStream(String path, Object body) {
         String url = client.getBaseUrl() + path;
-        
+        HttpURLConnection conn = null;
+        boolean handedOff = false;
         try {
-            HttpURLConnection conn = createConnection(url, "POST");
+            conn = createConnection(url, "POST");
             // Don't set Accept header - let the server determine response type
 
             String jsonBody = objectMapper.writeValueAsString(body);
+            byte[] streamPayload = jsonBody.getBytes(StandardCharsets.UTF_8);
+            // Streaming mode disables the JDK's hidden buffered-POST replay.
+            conn.setFixedLengthStreamingMode(streamPayload.length);
             try (OutputStream os = conn.getOutputStream()) {
-                os.write(jsonBody.getBytes(StandardCharsets.UTF_8));
+                os.write(streamPayload);
             }
             
             int responseCode = conn.getResponseCode();
             
-            if (responseCode == 401) {
-                throw new AuthenticationException("Invalid API key");
-            } else if (responseCode == 429) {
-                throw new RateLimitException("Rate limit exceeded");
-            } else if (responseCode >= 400) {
-                String errorBody = readErrorStream(conn);
-                throw new ApiException("API error: " + responseCode + " - " + errorBody, responseCode);
+            if (responseCode < 200 || responseCode >= 300) {
+                throw errorFor(conn, responseCode, "POST", path);
             }
             
             BufferedReader reader = new BufferedReader(
                 new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8)
             );
             
-            // Handle both "data:" and "data: " formats
-            return reader.lines()
-                .filter(line -> line.startsWith("data:"))
-                .map(line -> line.substring(5).stripLeading())  // Remove "data:" prefix and leading whitespace
-                .filter(data -> !data.equals("[DONE]"));
-                
+            HttpURLConnection streamConnection = conn;
+            Spliterator<String> frames = new Spliterators.AbstractSpliterator<String>(Long.MAX_VALUE, Spliterator.ORDERED) {
+                private boolean finished;
+
+                private void closeReader() {
+                    finished = true;
+                    try {
+                        reader.close();
+                    } catch (IOException error) {
+                        throw new SwfteException("Streaming reader close failed", redactor.cause(error));
+                    } finally {
+                        streamConnection.disconnect();
+                    }
+                }
+
+                @Override
+                public boolean tryAdvance(Consumer<? super String> action) {
+                    if (finished) return false;
+                    String data;
+                    try {
+                        String line;
+                        do {
+                            line = reader.readLine();
+                            if (line == null) { closeReader(); return false; }
+                        } while (!line.startsWith("data:"));
+                        data = line.substring(5).stripLeading();
+                        if (data.equals("[DONE]")) { closeReader(); return false; }
+                        try {
+                            com.fasterxml.jackson.databind.JsonNode envelope = objectMapper.readTree(data);
+                            if (envelope != null && envelope.isObject() && envelope.hasNonNull("error")) {
+                                throw new ApiException(redactor.text("Streaming API error: " + data), 500, redactor.text(data));
+                            }
+                        } catch (JsonProcessingException ignored) {
+                            // Keep the existing resource parser's handling of non-JSON frames.
+                        }
+                    } catch (IOException error) {
+                        SwfteException safe = new SwfteException("Streaming reader failed", redactor.cause(error));
+                        try { closeReader(); } catch (SwfteException closeError) { safe.addSuppressed(closeError); }
+                        throw safe;
+                    } catch (SwfteException error) {
+                        try { closeReader(); } catch (SwfteException closeError) { error.addSuppressed(closeError); }
+                        throw error;
+                    }
+                    action.accept(data); // Successful chunks stay intact; callers own their callbacks.
+                    return true;
+                }
+            };
+            Stream<String> stream = StreamSupport.stream(frames, false).onClose(() -> {
+                try { reader.close(); }
+                catch (IOException error) { throw new SwfteException("Streaming reader close failed", redactor.cause(error)); }
+                finally { streamConnection.disconnect(); }
+            });
+            handedOff = true;
+            return stream;
         } catch (IOException e) {
-            throw new SwfteException("Streaming request failed", e);
+            throw new SwfteException(redactor.text("Streaming request failed: " + path), redactor.cause(e));
+        } finally {
+            if (!handedOff && conn != null) conn.disconnect();
         }
     }
     
@@ -145,23 +325,33 @@ public class HttpClient {
      * Make a POST request with multipart form data.
      */
     public <T> T postMultipart(String path, Map<String, Object> fields, Class<T> responseType) {
-        String url = client.getBaseUrl() + path;
+        return postMultipartUrl(client.getBaseUrl() + path, path, fields, responseType);
+    }
+
+    /** Multipart POST against the agents-service root, never the gateway. */
+    public <T> T postMultipartWithCustomBase(String path, Map<String, Object> fields, Class<T> responseType) {
+        return postMultipartUrl(client.getApiBaseUrl() + path, path, fields, responseType);
+    }
+
+    private <T> T postMultipartUrl(String url, String path, Map<String, Object> fields, Class<T> responseType) {
         String boundary = "----SwfteBoundary" + System.currentTimeMillis();
-        
+        HttpURLConnection conn = null;
         try {
-            HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+            conn = open(url);
             conn.setRequestMethod("POST");
             conn.setDoOutput(true);
             conn.setConnectTimeout(client.getTimeout());
             conn.setReadTimeout(client.getTimeout() * 2);
             conn.setRequestProperty("Authorization", "Bearer " + client.getApiKey());
             conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
-            conn.setRequestProperty("User-Agent", "swfte-java/1.0.0");
+            conn.setRequestProperty("User-Agent", "swfte-java/" + SdkVersion.VERSION);
             
             if (client.getWorkspaceId() != null) {
                 conn.setRequestProperty("X-Workspace-ID", client.getWorkspaceId());
             }
-            
+
+            // Write multipart incrementally without buffering a replayable POST.
+            conn.setChunkedStreamingMode(8192);
             try (OutputStream os = conn.getOutputStream()) {
                 for (Map.Entry<String, Object> entry : fields.entrySet()) {
                     os.write(("--" + boundary + "\r\n").getBytes(StandardCharsets.UTF_8));
@@ -182,16 +372,17 @@ public class HttpClient {
             
             int responseCode = conn.getResponseCode();
             
-            if (responseCode >= 400) {
-                String errorBody = readErrorStream(conn);
-                throw new ApiException("API error: " + responseCode + " - " + errorBody, responseCode);
+            if (responseCode < 200 || responseCode >= 300) {
+                throw errorFor(conn, responseCode, "POST", path);
             }
             
             String responseBody = readResponseStream(conn);
             return objectMapper.readValue(responseBody, responseType);
             
         } catch (IOException e) {
-            throw new SwfteException("Multipart request failed", e);
+            throw new SwfteException(redactor.text("Multipart request failed: " + path), redactor.cause(e));
+        } finally {
+            if (conn != null) conn.disconnect();
         }
     }
     
@@ -200,31 +391,46 @@ public class HttpClient {
      */
     public byte[] postBytes(String path, Object body) {
         String url = client.getBaseUrl() + path;
-        
+        HttpURLConnection conn = null;
         try {
-            HttpURLConnection conn = createConnection(url, "POST");
-            
+            conn = createConnection(url, "POST");
+
             String jsonBody = objectMapper.writeValueAsString(body);
+            byte[] bytesPayload = jsonBody.getBytes(StandardCharsets.UTF_8);
+            // Keep byte-response calls subject to the same no-replay policy.
+            conn.setFixedLengthStreamingMode(bytesPayload.length);
             try (OutputStream os = conn.getOutputStream()) {
-                os.write(jsonBody.getBytes(StandardCharsets.UTF_8));
+                os.write(bytesPayload);
             }
             
             int responseCode = conn.getResponseCode();
             
-            if (responseCode >= 400) {
-                String errorBody = readErrorStream(conn);
-                throw new ApiException("API error: " + responseCode + " - " + errorBody, responseCode);
+            if (responseCode < 200 || responseCode >= 300) {
+                throw errorFor(conn, responseCode, "POST", path);
             }
             
             return conn.getInputStream().readAllBytes();
             
         } catch (IOException e) {
-            throw new SwfteException("Request failed", e);
+            throw new SwfteException(redactor.text("Request failed: " + path), redactor.cause(e));
+        } finally {
+            if (conn != null) conn.disconnect();
         }
     }
     
+    /**
+     * Open a connection that never follows a redirect. Every request carries the
+     * bearer key and workspace header; following a 3xx would replay them at
+     * whatever Location the server (or a spoofed hop) names.
+     */
+    private HttpURLConnection open(String url) throws IOException {
+        HttpURLConnection conn = connections.open(url);
+        conn.setInstanceFollowRedirects(false);
+        return conn;
+    }
+
     private HttpURLConnection createConnection(String url, String method) throws IOException {
-        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        HttpURLConnection conn = open(url);
         // HttpURLConnection doesn't natively support PATCH; use POST with X-HTTP-Method-Override
         if ("PATCH".equals(method)) {
             conn.setRequestMethod("POST");
@@ -237,7 +443,7 @@ public class HttpClient {
         conn.setReadTimeout(client.getTimeout());
         conn.setRequestProperty("Authorization", "Bearer " + client.getApiKey());
         conn.setRequestProperty("Content-Type", "application/json");
-        conn.setRequestProperty("User-Agent", "swfte-java/1.0.0");
+        conn.setRequestProperty("User-Agent", "swfte-java/" + SdkVersion.VERSION);
 
         if (client.getWorkspaceId() != null) {
             conn.setRequestProperty("X-Workspace-ID", client.getWorkspaceId());
@@ -247,17 +453,11 @@ public class HttpClient {
     }
     
     private String readResponseStream(HttpURLConnection conn) throws IOException {
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
-            StringBuilder response = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) {
-                response.append(line);
-            }
-            return response.toString();
+        try (InputStream in = conn.getInputStream()) {
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }
     }
-    
+
     private String readErrorStream(HttpURLConnection conn) {
         try {
             if (conn.getErrorStream() != null) {
@@ -286,7 +486,7 @@ public class HttpClient {
      * {@link HttpURLConnection} from transparently re-sending a POST.</p>
      *
      * <p>Errors: 401/403 {@link AuthenticationException}, 429 {@link RateLimitException},
-     * any other non-2xx {@link ApiException} (status code and raw body).</p>
+     * any other non-2xx {@link ApiException} (status code and credential-safe body).</p>
      *
      * @param path path (and query) relative to the API root, starting with {@code /}
      * @return the parsed body, or {@code null} for an empty body
@@ -303,22 +503,17 @@ public class HttpClient {
                 try (OutputStream os = conn.getOutputStream()) {
                     os.write(bytes);
                 }
+            } else if ("POST".equals(conn.getRequestMethod())) {
+                conn.setDoOutput(true);
+                conn.setFixedLengthStreamingMode(0);
+                conn.getOutputStream().close();
             } else {
                 conn.setDoOutput(false);
             }
 
             int code = conn.getResponseCode();
             if (code < 200 || code >= 300) {
-                String errorBody = readErrorStream(conn);
-                String message = "API error: " + code + " " + method + " " + path
-                    + (errorBody.isEmpty() ? "" : " - " + errorBody);
-                if (code == 401 || code == 403) {
-                    throw new AuthenticationException(message);
-                }
-                if (code == 429) {
-                    throw new RateLimitException(message);
-                }
-                throw new ApiException(message, code, errorBody);
+                throw errorFor(conn, code, method, path);
             }
 
             String text = code == 204 ? "" : readResponseStream(conn);
@@ -332,9 +527,9 @@ public class HttpClient {
         } catch (SwfteException e) {
             throw e;
         } catch (java.net.SocketTimeoutException e) {
-            throw new SwfteException("Request timed out: " + method + " " + path, e);
+            throw new SwfteException(redactor.text("Request timed out: " + method + " " + path), redactor.cause(e));
         } catch (IOException e) {
-            throw new SwfteException("Request failed: " + method + " " + path, e);
+            throw new SwfteException(redactor.text("Request failed: " + method + " " + path), redactor.cause(e));
         } finally {
             if (conn != null) {
                 conn.disconnect();
@@ -389,64 +584,16 @@ public class HttpClient {
     }
     
     /**
-     * Make an HTTP request with custom base URL and retry logic.
+     * Make an HTTP request against the agents-service root. Same retry policy as
+     * {@link #request(String, String, Object, Class)}.
      */
     public <T> T requestWithCustomBase(String method, String path, Object body, Class<T> responseType) {
-        String url = getCustomBaseUrl() + path;
-        Exception lastException = null;
-        
-        for (int attempt = 0; attempt < client.getMaxRetries(); attempt++) {
-            try {
-                HttpURLConnection conn = createConnection(url, method);
-                
-                if (body != null && !"GET".equals(method) && !"DELETE".equals(method)) {
-                    String jsonBody = objectMapper.writeValueAsString(body);
-                    try (OutputStream os = conn.getOutputStream()) {
-                        os.write(jsonBody.getBytes(StandardCharsets.UTF_8));
-                    }
-                }
-                
-                int responseCode = conn.getResponseCode();
-                
-                if (responseCode == 401) {
-                    throw new AuthenticationException("Invalid API key");
-                } else if (responseCode == 429) {
-                    throw new RateLimitException("Rate limit exceeded");
-                } else if (responseCode >= 400) {
-                    String errorBody = readErrorStream(conn);
-                    throw new ApiException("API error: " + responseCode + " - " + errorBody, responseCode);
-                }
-                
-                if (responseType == Void.class || responseCode == 204) {
-                    return null;
-                }
-                
-                if (responseType == String.class) {
-                    return responseType.cast(readResponseStream(conn));
-                }
-                
-                String responseBody = readResponseStream(conn);
-                if (responseBody == null || responseBody.isEmpty()) {
-                    return null;
-                }
-                return objectMapper.readValue(responseBody, responseType);
-                
-            } catch (AuthenticationException | RateLimitException e) {
-                throw e;
-            } catch (Exception e) {
-                lastException = e;
-                if (attempt < client.getMaxRetries() - 1) {
-                    try {
-                        Thread.sleep((long) Math.pow(2, attempt) * 100);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        throw new SwfteException("Request interrupted", ie);
-                    }
-                }
-            }
-        }
-        
-        throw new SwfteException("Request failed after " + client.getMaxRetries() + " attempts", lastException);
+        return execute(getCustomBaseUrl() + path, method, path, body, responseType, null);
+    }
+
+    /** Like {@link #requestWithCustomBase(String, String, Object, Class)} with an idempotency key. */
+    public <T> T requestWithCustomBase(String method, String path, Object body, Class<T> responseType,
+                                       String idempotencyKey) {
+        return execute(getCustomBaseUrl() + path, method, path, body, responseType, idempotencyKey);
     }
 }
-

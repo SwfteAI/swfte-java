@@ -1,88 +1,67 @@
 # Releasing `com.swfte:swfte-sdk`
 
-**Nothing has ever been published from this repository.** Maven Central has zero
-artifacts under `com.swfte`, and the previous configuration could not have
-produced any: it deployed to `s01.oss.sonatype.org`, a staging host Sonatype has
-retired, which now answers 404.
+Current version **1.2.0** (single source: `<version>` in `pom.xml`). Nothing has
+been published yet: Maven Central has no artifacts under `com.swfte`.
 
-This document is the list of things that must be true before a release can work.
-Four of them require a person; none can be done from CI.
+A Maven Central coordinate can never be yanked, deleted or replaced, so the last
+step (pressing Publish in the Portal) is deliberately manual.
 
----
+## Owner setup (one time; only a person can do these)
 
-## What has to exist first (one-time)
+1. **Namespace.** <https://central.sonatype.com>, Namespaces, add `com.swfte`,
+   publish the `TXT` record Sonatype shows on `swfte.com`, press Verify. This
+   proves domain ownership for the groupId and is the longest-lead item. Nothing
+   can be tested end to end before it shows Verified.
+2. **Portal user token.** Account, Generate User Token. It returns a username and
+   password (neither is your login).
+3. **GPG signing key (keep the primary key offline).**
+   - Create a certify-only primary key on a hardware token or encrypted offline
+     storage, plus a signing **subkey** that expires in 1-2 years.
+   - Publish the public key to `keys.openpgp.org` (confirm the email there) and
+     `keyserver.ubuntu.com`; Central validates signatures against them.
+   - Export only the subkey: `gpg --armor --export-secret-subkeys <SUBKEY_ID>!`
+   - Keep the revocation certificate offline.
+4. **Environment `maven-publish-prod`** (Settings, Environments):
+   - Deployment branches: `main` only. Required reviewers: at least two people who
+     are not the person dispatching; enable "prevent self-review".
+   - Add the four **environment secrets** here (not repository secrets, so no
+     other workflow or branch can read them):
 
-### 1. The `com.swfte` namespace, verified on the Central Portal
+     | Secret | Value |
+     |---|---|
+     | `CENTRAL_TOKEN_USERNAME` | Portal token username |
+     | `CENTRAL_TOKEN_PASSWORD` | Portal token password |
+     | `GPG_PRIVATE_KEY` | armored signing subkey export (`-----BEGIN` line included) |
+     | `GPG_PASSPHRASE` | its passphrase |
+5. **Branch protection on `main`** (pull request required, no force pushes).
 
-Maven Central will not accept a coordinate you have not proved you own. Register
-at <https://central.sonatype.com>, add the `com.swfte` namespace, and complete
-the DNS challenge — Sonatype issues a token to publish as a `TXT` record on
-`swfte.com`. Verification is usually minutes once the record propagates.
+## Publish procedure
 
-This is the longest-lead item. Start it before the rest.
+1. Merge the release commit to `main`. `pom.xml` `<version>`, the README install
+   snippets and a dated `CHANGELOG.md` heading must agree (`ReleaseShapeTest`
+   enforces this).
+2. Confirm the version is free and the namespace verified:
+   `curl -s -o /dev/null -w '%{http_code}' https://repo1.maven.org/maven2/com/swfte/swfte-sdk/<version>/swfte-sdk-<version>.pom`
+   must print `404`.
+3. Optional: `git tag v<version> && git push origin v<version>`. A tag push only
+   builds and verifies (never publishes); the tag must equal the pom version.
+4. Actions, **Release**, *Run workflow* on `main`: tick `publish` and type the exact
+   version into `confirm_version`. A dispatch from any other branch does not reach
+   the publish job.
+5. An approver approves the paused `publish` job. It runs
+   `mvn -B -P release deploy -DskipTests`: signs the jar, sources, javadoc and pom
+   and uploads a bundle that is **validated but not published**
+   (`autoPublish=false`). The separate `github-release` job then creates the
+   GitHub Release for the built commit.
+6. Central Portal, Deployments: inspect the bundle (jar, sources, javadoc, pom,
+   `.asc`, checksums), then press **Publish**. Irreversible.
+7. After the sync (typically 10-30 minutes) verify from an empty local repository:
+   `mvn dependency:get -Dartifact=com.swfte:swfte-sdk:<version> -Dtransitive=true`
+   and `gpg --verify swfte-sdk-<version>.jar.asc` against the keyserver key.
 
-### 2. A Central Portal user token
+## What the pipeline checks before upload
 
-Portal → your account → **Generate User Token**. It returns a username and a
-password; neither is your login. Store them as repository secrets:
-
-| Secret | Value |
-|---|---|
-| `CENTRAL_TOKEN_USERNAME` | the token username |
-| `CENTRAL_TOKEN_PASSWORD` | the token password |
-
-### 3. A GPG signing key
-
-Central rejects unsigned bundles. Generate a key, publish the **public** half to
-a keyserver (`keys.openpgp.org`), and store the private half:
-
-```bash
-gpg --full-generate-key                      # RSA 4096, no expiry is fine
-gpg --list-secret-keys --keyid-format=long   # note the key id
-gpg --keyserver keys.openpgp.org --send-keys <KEY_ID>
-gpg --armor --export-secret-keys <KEY_ID>    # the value for GPG_PRIVATE_KEY
-```
-
-| Secret | Value |
-|---|---|
-| `GPG_PRIVATE_KEY` | the full ASCII-armoured private key, `-----BEGIN` line included |
-| `GPG_PASSPHRASE` | the passphrase for that key |
-
-### 4. The `maven-publish-prod` environment
-
-Settings → Environments → create `maven-publish-prod`. Add required reviewers if
-the plan allows it; the workflow's typed-version confirmation stands either way.
-
----
-
-## Cutting a release
-
-1. Bump `<version>` in `pom.xml` and add a `CHANGELOG.md` entry. Merge that.
-2. Optionally tag `v<version>` and push. **This builds and verifies. It does not
-   publish** — that is deliberate, and is the opposite of what the old workflow
-   did.
-3. Actions → **Release** → *Run workflow*:
-   - `publish`: ✅
-   - `confirm_version`: type the version exactly, e.g. `1.1.1`
-4. The run uploads a **validated but unpublished** bundle to the Portal.
-5. Go to <https://central.sonatype.com/publishing/deployments>, look at it, and
-   press **Publish**.
-
-Step 5 is not automated on purpose. A Maven Central coordinate cannot be yanked,
-deleted, or replaced — not after 72 hours, not ever. `autoPublish` is `false` in
-the pom's `release` profile so the irreversible step is taken by a person who
-has just looked at what they are releasing.
-
----
-
-## What the pipeline checks before it lets you publish
-
-- the tag matches `pom.xml` (a tag that disagrees fails rather than surprising you)
-- the version is not already on Maven Central
+- the tag matches `pom.xml`
+- the version is not on Maven Central (asks `repo1.maven.org`, fails closed)
 - `mvn verify` passes
-- **the compiled jar's default `baseUrl` is `https://api.swfte.com/agents/v2/gateway`**
-
-That last one is there because that exact default shipped wrong: it omitted
-`/agents`, so every caller who took the default got a bare nginx 403. It is
-asserted against the built artefact rather than the source, because what ships
-is the artefact.
+- the compiled jar's default `baseUrl` is `https://api.swfte.com/agents/v2/gateway`

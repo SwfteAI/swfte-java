@@ -6,7 +6,7 @@
 
     <groupId>com.swfte</groupId>
     <artifactId>swfte-sdk</artifactId>
-    <version>1.1.1</version>
+    <version>1.2.0</version>
     <packaging>jar</packaging>
 
     <name>Swfte Java SDK</name>
@@ -53,10 +53,9 @@
 
     <properties>
         <java.version>11</java.version>
-        <maven.compiler.source>11</maven.compiler.source>
-        <maven.compiler.target>11</maven.compiler.target>
+        <maven.compiler.release>11</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <jackson.version>2.15.3</jackson.version>
+        <jackson.version>2.18.11</jackson.version>
     </properties>
 
     <dependencies>
@@ -99,20 +98,48 @@
     </dependencies>
 
     <build>
+        <resources>
+            <!-- Only this one file is filtered: it is how the pom version reaches the User-Agent. -->
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+                <includes>
+                    <include>com/swfte/sdk/sdk-version.properties</include>
+                </includes>
+            </resource>
+            <resource>
+                <directory>src/main/legal</directory>
+                <filtering>false</filtering>
+                <targetPath>META-INF</targetPath>
+                <includes><include>LICENSE</include></includes>
+            </resource>
+        </resources>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.11.0</version>
                 <configuration>
-                    <source>${java.version}</source>
-                    <target>${java.version}</target>
+                    <release>${maven.compiler.release}</release>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.3.0</version>
+                <configuration>
+                    <archive>
+                        <manifestEntries>
+                            <Automatic-Module-Name>com.swfte.sdk</Automatic-Module-Name>
+                        </manifestEntries>
+                    </archive>
                 </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-source-plugin</artifactId>
                 <version>3.3.0</version>
+                <configuration><excludeResources>false</excludeResources></configuration>
                 <executions>
                     <execution>
                         <id>attach-sources</id>
@@ -126,6 +153,10 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-javadoc-plugin</artifactId>
                 <version>3.6.2</version>
+                <configuration>
+                    <javadocDirectory>${project.basedir}/src/main/legal</javadocDirectory>
+                    <docfilessubdirs>true</docfilessubdirs>
+                </configuration>
                 <executions>
                     <execution>
                         <id>attach-javadocs</id>

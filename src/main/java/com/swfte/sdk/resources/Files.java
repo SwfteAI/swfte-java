@@ -43,13 +43,13 @@ public class Files {
         fields.put("file", data);
         if (filename != null) fields.put("filename", filename);
         if (mimeType != null) fields.put("mimeType", mimeType);
-        return httpClient.postMultipart(base() + "/upload", fields, FileMetadata.class);
+        return httpClient.postMultipartWithCustomBase(base() + "/upload", fields, FileMetadata.class);
     }
 
     /** Upload a batch of files. */
     @SuppressWarnings("unchecked")
     public Map<String, Object> uploadBatch(Map<String, Object> fields) {
-        return httpClient.postMultipart(base() + "/upload-batch", fields, Map.class);
+        return httpClient.postMultipartWithCustomBase(base() + "/upload-batch", fields, Map.class);
     }
 
     /** List uploaded files. */

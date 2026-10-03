@@ -2,6 +2,7 @@ package com.swfte.sdk.resources;
 
 import com.swfte.sdk.SwfteClient;
 import com.swfte.sdk.HttpClient;
+import com.swfte.sdk.CredentialRedactor;
 import com.swfte.sdk.models.Deployment;
 import com.swfte.sdk.models.DeploymentListResponse;
 
@@ -37,10 +38,12 @@ public class Deployments {
     
     private final HttpClient httpClient;
     private final SwfteClient client;
+    private final CredentialRedactor redactor;
     
     public Deployments(SwfteClient client) {
         this.client = client;
         this.httpClient = new HttpClient(client);
+        this.redactor = new CredentialRedactor(client.getApiKey());
     }
     
     /**
@@ -244,7 +247,7 @@ public class Deployments {
         while (true) {
             long elapsed = System.currentTimeMillis() - startTime;
             if (elapsed > timeoutMs) {
-                throw new RuntimeException("Deployment " + deploymentId + " did not become ready within " + timeoutMs + "ms");
+                throw new RuntimeException(redactor.text("Deployment " + deploymentId + " did not become ready within " + timeoutMs + "ms"));
             }
             
             Deployment deployment = getStatus(deploymentId);
@@ -252,16 +255,16 @@ public class Deployments {
             if (deployment.getState() == Deployment.State.RUNNING) {
                 return deployment;
             } else if (deployment.getState() == Deployment.State.FAILED) {
-                throw new RuntimeException("Deployment " + deploymentId + " failed: " + deployment.getStatusMessage());
+                throw new RuntimeException(redactor.text("Deployment " + deploymentId + " failed: " + deployment.getStatusMessage()));
             } else if (deployment.getState() == Deployment.State.TERMINATED) {
-                throw new RuntimeException("Deployment " + deploymentId + " was terminated");
+                throw new RuntimeException(redactor.text("Deployment " + deploymentId + " was terminated"));
             }
             
             try {
                 Thread.sleep(pollIntervalMs);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new RuntimeException("Interrupted while waiting for deployment", e);
+                throw new RuntimeException("Interrupted while waiting for deployment", redactor.cause(e));
             }
         }
     }
@@ -283,7 +286,6 @@ public class Deployments {
         }
     }
 }
-
 
 
 

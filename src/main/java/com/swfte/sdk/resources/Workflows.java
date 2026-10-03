@@ -2,6 +2,7 @@ package com.swfte.sdk.resources;
 
 import com.swfte.sdk.SwfteClient;
 import com.swfte.sdk.HttpClient;
+import com.swfte.sdk.CredentialRedactor;
 import com.swfte.sdk.models.Workflow;
 import com.swfte.sdk.models.WorkflowNode;
 import com.swfte.sdk.models.WorkflowEdge;
@@ -65,10 +66,12 @@ public class Workflows {
     
     private final HttpClient httpClient;
     private final SwfteClient client;
+    private final CredentialRedactor redactor;
     
     public Workflows(SwfteClient client) {
         this.client = client;
         this.httpClient = new HttpClient(client);
+        this.redactor = new CredentialRedactor(client.getApiKey());
     }
     
     /**
@@ -259,7 +262,7 @@ public class Workflows {
         );
         Object executionId = res == null ? null : res.get("executionId");
         if (executionId == null || String.valueOf(executionId).isEmpty()) {
-            throw new ApiException("Invoke response did not include an executionId", 502, String.valueOf(res));
+            throw new ApiException("Invoke response did not include an executionId", 502, redactor.text(String.valueOf(res)));
         }
         Object wf = res.get("workflowId");
         Object status = res.get("status");
@@ -343,36 +346,41 @@ public class Workflows {
                 case PAUSED: {
                     // BT-N5: a human-in-the-loop run will not finish by being polled; hand it back now.
                     if (!throwOnPause) return execution;
-                    List<WorkflowExecution.PausedNode> waiting = execution.getWaitingFor();
+                    WorkflowExecution safe = redactor.execution(execution);
+                    List<WorkflowExecution.PausedNode> waiting = safe.getWaitingFor();
                     StringBuilder where = new StringBuilder();
                     for (WorkflowExecution.PausedNode n : waiting) where.append(where.length() == 0 ? " at " : ", ").append(n.getNodeId());
                     throw new WorkflowPausedException(
-                        "Execution " + executionId + " is waiting for input (" + status + where + ")",
-                        executionId, status, waiting, execution);
+                        redactor.text("Execution " + executionId + " is waiting for input (" + status + where + ")"),
+                        redactor.text(executionId), safe.getStatusRaw(), waiting, safe);
                 }
-                case FAILED:
+                case FAILED: {
+                    WorkflowExecution safe = redactor.execution(execution);
                     throw new WorkflowExecutionException(
-                        "Execution " + executionId + " " + status.toLowerCase(java.util.Locale.ROOT)
-                            + (execution.getError() != null ? ": " + execution.getError() : ""),
-                        executionId, status, execution);
-                case CANCELLED:
+                        redactor.text("Execution " + executionId + " " + status.toLowerCase(java.util.Locale.ROOT)
+                            + (execution.getError() != null ? ": " + execution.getError() : "")),
+                        redactor.text(executionId), safe.getStatusRaw(), safe);
+                }
+                case CANCELLED: {
+                    WorkflowExecution safe = redactor.execution(execution);
                     throw new WorkflowExecutionException(
-                        "Execution " + executionId + " was cancelled", executionId, status, execution);
+                        redactor.text("Execution " + executionId + " was cancelled"), redactor.text(executionId), safe.getStatusRaw(), safe);
+                }
                 default:
                     break;
             }
             long remainingMs = (deadline - System.nanoTime()) / 1_000_000L;
             if (remainingMs <= 0) {
                 throw new WorkflowTimeoutException(
-                    "Execution " + executionId + " did not complete within " + timeoutMs + "ms (last status "
-                        + (status.isEmpty() ? "unknown" : status) + ")",
-                    executionId, execution);
+                    redactor.text("Execution " + executionId + " did not complete within " + timeoutMs + "ms (last status "
+                        + (status.isEmpty() ? "unknown" : status) + ")"),
+                    redactor.text(executionId), redactor.execution(execution));
             }
             try {
                 Thread.sleep(Math.min(interval, remainingMs));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new SwfteException("Interrupted while waiting for execution " + executionId, e);
+                throw new SwfteException(redactor.text("Interrupted while waiting for execution " + executionId), redactor.cause(e));
             }
         }
     }
@@ -621,7 +629,6 @@ public class Workflows {
         return result;
     }
 }
-
 
 
 

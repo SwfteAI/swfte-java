@@ -1,0 +1,142 @@
+{
+  "checkout": "/private/tmp/swfte-p5-resume-20261001/java",
+  "evidence": "/private/tmp/swfte-p5-resume-20261001/.unlazy/p5-code/evidence/sdk-java-post-mutants",
+  "mutants": [
+    {
+      "id": "JAVA_STREAM_CONSUMED_REPLAY",
+      "path": "src/main/java/com/swfte/sdk/HttpClient.java",
+      "before": "            conn.setFixedLengthStreamingMode(streamPayload.length);",
+      "after": "            // MUTANT: permit buffered streamed-chat POST replay.",
+      "selector": "PostHelperReplayTest#streamedChatNeverReplaysConsumedPostWhenResponseCloses",
+      "assertion": "a fully consumed POST was replayed"
+    },
+    {
+      "id": "JAVA_MULTIPART_CONSUMED_REPLAY",
+      "path": "src/main/java/com/swfte/sdk/HttpClient.java",
+      "before": "            conn.setChunkedStreamingMode(8192);",
+      "after": "            // MUTANT: permit buffered multipart POST replay.",
+      "selector": "PostHelperReplayTest#multipartHelpersNeverReplayConsumedPostWhenResponseCloses",
+      "assertion": "a fully consumed POST was replayed"
+    },
+    {
+      "id": "JAVA_BYTES_CONSUMED_REPLAY",
+      "path": "src/main/java/com/swfte/sdk/HttpClient.java",
+      "before": "            conn.setFixedLengthStreamingMode(bytesPayload.length);",
+      "after": "            // MUTANT: permit buffered byte-response POST replay.",
+      "selector": "PostHelperReplayTest#speechHelpersNeverReplayConsumedPostWhenResponseCloses",
+      "assertion": "a fully consumed POST was replayed"
+    },
+    {
+      "id": "JAVA_STREAM_CROSS_ORIGIN",
+      "path": "src/main/java/com/swfte/sdk/HttpClient.java",
+      "before": "            conn.setFixedLengthStreamingMode(streamPayload.length);",
+      "after": "            // MUTANT: permit streamed-chat redirect follow.",
+      "selector": "PostHelperReplayTest#specialPostHelpersNeverDiscloseBodiesOrHeadersAcrossRedirectOrigins",
+      "assertion": "redirect disclosed request method, body or credential headers"
+    },
+    {
+      "id": "JAVA_MULTIPART_CROSS_ORIGIN",
+      "path": "src/main/java/com/swfte/sdk/HttpClient.java",
+      "before": "            conn.setChunkedStreamingMode(8192);",
+      "after": "            // MUTANT: permit multipart redirect follow.",
+      "selector": "PostHelperReplayTest#specialPostHelpersNeverDiscloseBodiesOrHeadersAcrossRedirectOrigins",
+      "assertion": "redirect disclosed request method, body or credential headers"
+    },
+    {
+      "id": "JAVA_BYTES_CROSS_ORIGIN",
+      "path": "src/main/java/com/swfte/sdk/HttpClient.java",
+      "before": "            conn.setFixedLengthStreamingMode(bytesPayload.length);",
+      "after": "            // MUTANT: permit byte-response redirect follow.",
+      "selector": "PostHelperReplayTest#specialPostHelpersNeverDiscloseBodiesOrHeadersAcrossRedirectOrigins",
+      "assertion": "redirect disclosed request method, body or credential headers"
+    },
+    {
+      "id": "JAVA_GATEWAY_JSON_REPLAY",
+      "path": "src/main/java/com/swfte/sdk/HttpClient.java",
+      "before": "                    conn.setFixedLengthStreamingMode(payload.length);",
+      "after": "                    // MUTANT: permit buffered central JSON replay.",
+      "selector": "PostHelperReplayTest#centralJsonPostsNeverReplayConsumedBody",
+      "assertion": "a fully consumed POST was replayed"
+    },
+    {
+      "id": "JAVA_API_JSON_REPLAY",
+      "path": "src/main/java/com/swfte/sdk/HttpClient.java",
+      "before": "                conn.setFixedLengthStreamingMode(bytes.length);",
+      "after": "                // MUTANT: permit buffered API JSON replay.",
+      "selector": "PostHelperReplayTest#centralJsonPostsNeverReplayConsumedBody",
+      "assertion": "a fully consumed POST was replayed"
+    },
+    {
+      "id": "JAVA_GATEWAY_JSON_CROSS_ORIGIN",
+      "path": "src/main/java/com/swfte/sdk/HttpClient.java",
+      "before": "                    conn.setFixedLengthStreamingMode(payload.length);",
+      "after": "                    // MUTANT: permit central JSON redirect follow.",
+      "selector": "PostHelperReplayTest#centralPostsNeverDiscloseBodiesOrHeadersAcrossRedirectOrigins",
+      "assertion": "central POST disclosed body or credentials across origins"
+    },
+    {
+      "id": "JAVA_API_JSON_CROSS_ORIGIN",
+      "path": "src/main/java/com/swfte/sdk/HttpClient.java",
+      "before": "                conn.setFixedLengthStreamingMode(bytes.length);",
+      "after": "                // MUTANT: permit API JSON redirect follow.",
+      "selector": "PostHelperReplayTest#centralPostsNeverDiscloseBodiesOrHeadersAcrossRedirectOrigins",
+      "assertion": "central POST disclosed body or credentials across origins"
+    },
+    {
+      "id": "JAVA_API_MULTIPART_ROOT",
+      "path": "src/main/java/com/swfte/sdk/HttpClient.java",
+      "before": "        return postMultipartUrl(client.getApiBaseUrl() + path, path, fields, responseType);",
+      "after": "        return postMultipartUrl(client.getBaseUrl() + path, path, fields, responseType);",
+      "selector": "PostHelperReplayTest#fileUploadsUseOnlyApiBaseWithSuccessAndConsumedBodyDisconnect",
+      "assertion": "file upload body or Authorization reached the gateway instead of apiBaseUrl"
+    },
+    {
+      "id": "JAVA_SINGLE_FILE_ROOT",
+      "path": "src/main/java/com/swfte/sdk/resources/Files.java",
+      "before": "return httpClient.postMultipartWithCustomBase(base() + \"/upload\", fields, FileMetadata.class);",
+      "after": "return httpClient.postMultipart(base() + \"/upload\", fields, FileMetadata.class);",
+      "selector": "PostHelperReplayTest#fileUploadsUseOnlyApiBaseWithSuccessAndConsumedBodyDisconnect",
+      "assertion": "file upload body or Authorization reached the gateway instead of apiBaseUrl"
+    },
+    {
+      "id": "JAVA_BATCH_FILE_ROOT",
+      "path": "src/main/java/com/swfte/sdk/resources/Files.java",
+      "before": "return httpClient.postMultipartWithCustomBase(base() + \"/upload-batch\", fields, Map.class);",
+      "after": "return httpClient.postMultipart(base() + \"/upload-batch\", fields, Map.class);",
+      "selector": "PostHelperReplayTest#fileUploadsUseOnlyApiBaseWithSuccessAndConsumedBodyDisconnect",
+      "assertion": "file upload body or Authorization reached the gateway instead of apiBaseUrl"
+    },
+    {
+      "id": "JAVA_EMPTY_GATEWAY_REPLAY",
+      "path": "src/main/java/com/swfte/sdk/HttpClient.java",
+      "before": "\n                    conn.setFixedLengthStreamingMode(0);",
+      "after": "\n                    // MUTANT: permit buffered empty POST replay.",
+      "selector": "PostHelperReplayTest#centralEmptyPostsNeverReplayConsumedRequests",
+      "assertion": "an empty side-effecting POST was replayed"
+    },
+    {
+      "id": "JAVA_EMPTY_API_REPLAY",
+      "path": "src/main/java/com/swfte/sdk/HttpClient.java",
+      "before": "\n                conn.setFixedLengthStreamingMode(0);",
+      "after": "\n                // MUTANT: permit buffered empty API POST replay.",
+      "selector": "PostHelperReplayTest#centralEmptyPostsNeverReplayConsumedRequests",
+      "assertion": "an empty side-effecting POST was replayed"
+    },
+    {
+      "id": "JAVA_EMPTY_GATEWAY_CROSS_ORIGIN",
+      "path": "src/main/java/com/swfte/sdk/HttpClient.java",
+      "before": "\n                    conn.setFixedLengthStreamingMode(0);",
+      "after": "\n                    // MUTANT: permit empty POST redirect follow.",
+      "selector": "PostHelperReplayTest#centralEmptyPostsNeverFollowCrossOriginRedirects",
+      "assertion": "empty POST redirect sent a request or credentials across origins"
+    },
+    {
+      "id": "JAVA_EMPTY_API_CROSS_ORIGIN",
+      "path": "src/main/java/com/swfte/sdk/HttpClient.java",
+      "before": "\n                conn.setFixedLengthStreamingMode(0);",
+      "after": "\n                // MUTANT: permit empty API POST redirect follow.",
+      "selector": "PostHelperReplayTest#centralEmptyPostsNeverFollowCrossOriginRedirects",
+      "assertion": "empty POST redirect sent a request or credentials across origins"
+    }
+  ]
+}
