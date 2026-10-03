@@ -50,7 +50,7 @@ class CallsiteVersionTest {
             } else if(path.endsWith("/status")) {
                 String[] pieces=path.split("/"); Object version=executions.get(pieces[pieces.length-2]);
                 String versionJson=version instanceof Number?version.toString():"\""+version+"\"";
-                json="{\"execution\":{\"executionId\":\"ex\",\"status\":\"SUCCEEDED\",\"workflowVersion\":"+versionJson+",\"outputData\":{\"marker\":\"snapshot-"+version+"\"}}}";
+                json="{\"execution\":{\"executionId\":\""+pieces[pieces.length-2]+"\",\"status\":\"SUCCEEDED\",\"workflowVersion\":"+versionJson+",\"outputData\":{\"marker\":\"snapshot-"+version+"\"}}}";
             } else {
                 Object version=segment==null?live:segment;
                 String eid="ex_"+executions.size(); executions.put(eid,version);

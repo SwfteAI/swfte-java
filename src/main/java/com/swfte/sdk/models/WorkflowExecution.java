@@ -35,6 +35,7 @@ public class WorkflowExecution {
         COMPLETED,
         SUCCESS,
         SUCCEEDED,
+        PARTIAL,
         FAILED,
         TIMEOUT,
         CANCELLED,
@@ -47,6 +48,7 @@ public class WorkflowExecution {
         /** Waiting for a person (HUMAN_INPUT gate) or an external event; not terminal, but polling will not move it on. */
         PAUSED,
         SUCCEEDED,
+        PARTIAL,
         FAILED,
         CANCELLED
     }
@@ -111,6 +113,7 @@ public class WorkflowExecution {
     public static Outcome classify(String status) {
         String s = status == null ? "" : status.toUpperCase(Locale.ROOT);
         if (SUCCESS_STATUSES.contains(s)) return Outcome.SUCCEEDED;
+        if ("PARTIAL".equals(s)) return Outcome.PARTIAL;
         if (FAILURE_STATUSES.contains(s)) return Outcome.FAILED;
         if (CANCELLED_STATUSES.contains(s)) return Outcome.CANCELLED;
         if (PAUSED_STATUSES.contains(s)) return Outcome.PAUSED;
@@ -291,6 +294,7 @@ public class WorkflowExecution {
      * Build from {@code GET /v2/workflows/executions/{executionId}/status}, lifting
      * {@code executionId}, {@code workflowId}, {@code status}, {@code outputData}
      * and the error message out of the nested {@code execution} record.
+     * Supplied top-level/nested executionId/id aliases must all equal the requested identity.
      */
     @SuppressWarnings("unchecked")
     public static WorkflowExecution fromStatusResponse(String executionId, Map<String, Object> body) {
@@ -299,9 +303,16 @@ public class WorkflowExecution {
             ? (Map<String, Object>) data.get("execution")
             : Collections.emptyMap();
 
+        // Validate every accepted identity alias before lifting status; fallback is all-absent only.
+        for (Map<String, Object> record : java.util.Arrays.asList(data, nested)) {
+            for (String key : new String[] {"executionId", "id"}) {
+                if (record.containsKey(key) && !java.util.Objects.equals(executionId, record.get(key))) {
+                    throw new com.swfte.sdk.exceptions.ApiException("Execution status identity mismatch", 502);
+                }
+            }
+        }
         WorkflowExecution e = new WorkflowExecution();
-        String id = str(pick(data, nested, "executionId", "id"));
-        e.setExecutionId(id != null ? id : executionId);
+        e.setExecutionId(executionId);
         e.setId(e.getExecutionId());
         e.setWorkflowId(str(pick(data, nested, "workflowId")));
 

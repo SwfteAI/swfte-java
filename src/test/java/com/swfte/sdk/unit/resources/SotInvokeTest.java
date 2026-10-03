@@ -208,6 +208,43 @@ class SotInvokeTest {
         }
 
         @Test
+        void statusIdentitiesMustAllMatchBeforeTerminalClassification() throws Exception {
+            for (String body : new String[] {
+                "{\"executionId\":\"other\",\"status\":\"SUCCEEDED\"}",
+                "{\"execution\":{\"executionId\":\"other\",\"status\":\"SUCCEEDED\"}}",
+                "{\"executionId\":\"ex_1\",\"execution\":{\"executionId\":\"other\",\"status\":\"SUCCEEDED\"}}",
+                "{\"executionId\":\"other\",\"execution\":{\"executionId\":\"ex_1\",\"status\":\"SUCCEEDED\"}}",
+                "{\"executionId\":\"ex_1\",\"id\":\"other\",\"status\":\"SUCCEEDED\"}",
+                "{\"execution\":{\"executionId\":\"ex_1\",\"id\":\"other\",\"status\":\"SUCCEEDED\"}}",
+                "{\"id\":\"other\",\"status\":\"PAUSED\"}",
+                "{\"executionId\":null,\"status\":\"SUCCEEDED\"}",
+                "{\"executionId\":1,\"status\":\"SUCCEEDED\"}",
+                "{\"executionId\":\"\",\"status\":\"SUCCEEDED\"}"
+            }) {
+                SwfteClient c = client(ok(body));
+                ApiException failure = assertThrows(ApiException.class, () -> c.workflows().waitForCompletion("ex_1", 1000, 0));
+                assertEquals(502, failure.getStatusCode()); assertEquals(1, server.recorded().size());
+                tearDown();
+            }
+        }
+
+        @Test
+        void exactStatusIdentitiesAndAllAbsentPathFallbackRemainValid() throws Exception {
+            for (String body : new String[] {
+                "{\"execution\":{\"executionId\":\"ex_1\",\"status\":\"SUCCEEDED\",\"outputData\":{\"answer\":42}}}",
+                "{\"executionId\":\"ex_1\",\"id\":\"ex_1\",\"execution\":{\"executionId\":\"ex_1\",\"id\":\"ex_1\",\"status\":\"SUCCEEDED\"}}",
+                "{\"id\":\"ex_1\",\"status\":\"SUCCEEDED\"}",
+                "{\"status\":\"SUCCEEDED\"}"
+            }) {
+                SwfteClient c = client(ok(body));
+                WorkflowExecution done = c.workflows().waitForCompletion("ex_1", 1000, 0);
+                assertEquals("ex_1", done.getExecutionId()); assertTrue(done.isSucceeded());
+                if (body.contains("outputData")) assertEquals(42, done.getOutputs().get("answer"));
+                assertEquals(1, server.recorded().size()); tearDown();
+            }
+        }
+
+        @Test
         void getExecutionStatusLiftsNestedRecord() throws Exception {
             SwfteClient c = client(ok(statusBody("success", "\"outputData\":{\"answer\":42}")));
             WorkflowExecution st = c.workflows().getExecutionStatus("ex_1");
@@ -461,6 +498,57 @@ class SotInvokeTest {
             assertEquals("https://x/agents", SwfteClient.deriveApiBaseUrl("https://x/agents/gateway"));
             assertEquals("https://x/agents", SwfteClient.deriveApiBaseUrl("https://x/agents/gateway/"));
             assertEquals("https://x/gateways", SwfteClient.deriveApiBaseUrl("https://x/gateways"));
+        }
+    }
+
+
+    @Nested
+    class NativePartial {
+        @Test void firstTerminalGetStopsEveryPublicWaitWithCurrentTypedExecution() throws Exception {
+            for (String mode : List.of("invoke", "version", "legacy")) {
+                for (String terminal : List.of("PARTIAL", "SUCCEEDED")) {
+                    Response end = ok(statusBody(terminal, "\"outputData\":{\"retained\":42}"));
+                    SwfteClient c = "legacy".equals(mode) ? client(end)
+                            : client(new Response(202, "{\"executionId\":\"ex_1\",\"status\":\"RUNNING\"}"), end);
+                    org.junit.jupiter.api.function.Executable wait = () -> waitMode(c, mode);
+                    if ("PARTIAL".equals(terminal)) {
+                        WorkflowExecutionException error = assertThrows(WorkflowExecutionException.class, wait);
+                        assertEquals("PARTIAL", error.getStatus()); assertEquals("ex_1", error.getExecutionId());
+                        WorkflowExecution execution = error.getExecution();
+                        assertEquals(WorkflowExecution.Status.PARTIAL, execution.getStatus());
+                        assertEquals("PARTIAL", execution.getStatusRaw()); assertEquals("ex_1", execution.getExecutionId());
+                        assertEquals(WorkflowExecution.Outcome.PARTIAL, execution.getOutcome());
+                        assertTrue(execution.isTerminal()); assertFalse(execution.isSucceeded());
+                        assertEquals(42, execution.getOutputs().get("retained"));
+                    } else assertTrue(waitMode(c, mode).isSucceeded());
+                    assertEquals("legacy".equals(mode) ? 1 : 2, server.recorded().size());
+                    assertEquals("GET", server.last().method);
+                    assertEquals("/v2/workflows/executions/ex_1/status", server.last().path);
+                    if (!"legacy".equals(mode)) assertEquals("/v2/workflows/wf_1"
+                            + ("version".equals(mode) ? "/versions/1.0.7" : "") + "/invoke", server.recorded().get(0).path);
+                    server.close(); server = null;
+                }
+            }
+        }
+        WorkflowExecution waitMode(SwfteClient c, String mode) {
+            if ("invoke".equals(mode)) return c.workflows().invokeAndWait("wf_1", null, 1000, 0);
+            if ("version".equals(mode)) return c.workflows().invokeVersionAndWait("wf_1", "1.0.7", null, 1000, 0, false);
+            return c.workflows().waitForCompletion("ex_1", 1000, 0);
+        }
+        @Test void partialClassificationDoesNotChangePauseMissingOrUnknownWait() throws Exception {
+            assertEquals(WorkflowExecution.Outcome.PARTIAL, WorkflowExecution.classify("partial"));
+            for (String status : List.of("PAUSED", "", "NATIVE_FUTURE")) {
+                String body = status.isEmpty() ? "{\"execution\":{\"executionId\":\"ex_1\"}}" : statusBody(status, null);
+                SwfteClient c = client(ok(body));
+                if ("PAUSED".equals(status)) assertTrue(c.workflows().waitForCompletion("ex_1", 0, 0).isPaused());
+                else assertThrows(WorkflowTimeoutException.class, () -> c.workflows().waitForCompletion("ex_1", 0, 0));
+                assertEquals(1, server.recorded().size()); server.close(); server = null;
+            }
+        }
+        @Test void foreignPartialStillFails502IdentityAdmission() throws Exception {
+            SwfteClient c = client(ok(statusBody("PARTIAL", null).replace("ex_1", "foreign")));
+            ApiException error = assertThrows(ApiException.class, () -> c.workflows().waitForCompletion("ex_1", 0, 0));
+            assertEquals(502, error.getStatusCode()); assertEquals(1, server.recorded().size());
         }
     }
 }

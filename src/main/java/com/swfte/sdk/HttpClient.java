@@ -425,15 +425,20 @@ public class HttpClient {
     public <T> T requestWithCustomBase(String method, String path, Object body, Class<T> responseType, String callsite) {
         String url = getCustomBaseUrl() + path;
         Exception lastException = null;
+        final int maxAttempts = "GET".equals(method) ? client.getMaxRetries() : 1;
 
-        for (int attempt = 0; attempt < client.getMaxRetries(); attempt++) {
+        for (int attempt = 0; attempt < maxAttempts; attempt++) {
+            HttpURLConnection conn = null;
             try {
-                HttpURLConnection conn = createConnection(url, method, callsite);
+                byte[] bodyBytes = body != null && !"GET".equals(method) && !"DELETE".equals(method)
+                        ? objectMapper.writeValueAsBytes(body) : new byte[0];
+                conn = createConnection(url, method, callsite);
+                // Streaming fixes the UTF-8 byte count before output and prevents implicit JDK POST replay.
+                if (!"GET".equals(method)) conn.setFixedLengthStreamingMode(bodyBytes.length);
                 
                 if (body != null && !"GET".equals(method) && !"DELETE".equals(method)) {
-                    String jsonBody = objectMapper.writeValueAsString(body);
                     try (OutputStream os = conn.getOutputStream()) {
-                        os.write(jsonBody.getBytes(StandardCharsets.UTF_8));
+                        os.write(bodyBytes);
                     }
                 }
                 
@@ -466,7 +471,7 @@ public class HttpClient {
                 throw e;
             } catch (Exception e) {
                 lastException = e;
-                if (attempt < client.getMaxRetries() - 1) {
+                if (attempt < maxAttempts - 1) {
                     try {
                         Thread.sleep((long) Math.pow(2, attempt) * 100);
                     } catch (InterruptedException ie) {
@@ -474,9 +479,11 @@ public class HttpClient {
                         throw new SwfteException("Request interrupted", ie);
                     }
                 }
+            } finally {
+                if (conn != null) conn.disconnect();
             }
         }
         
-        throw new SwfteException("Request failed after " + client.getMaxRetries() + " attempts", lastException);
+        throw new SwfteException("Request failed after " + maxAttempts + " attempts", lastException);
     }
 }

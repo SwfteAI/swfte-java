@@ -357,7 +357,7 @@ public class Workflows {
      *         or — returned at once rather than polled until the timeout — the execution paused for
      *         human input ({@code PAUSED}, {@code WAITING_FOR_INPUT}; {@link WorkflowExecution#isPaused()}
      *         true, {@link WorkflowExecution#getWaitingFor()} names the gate)
-     * @throws WorkflowExecutionException the run ended FAILED/TIMEOUT or CANCELLED/CANCELED
+     * @throws WorkflowExecutionException the run ended PARTIAL (terminal non-success), FAILED/TIMEOUT or CANCELLED/CANCELED
      * @throws WorkflowTimeoutException {@code timeoutMs} elapsed first; the run is not cancelled
      */
     public WorkflowExecution invokeAndWait(String workflowId, Map<String, Object> inputs, long timeoutMs, long pollIntervalMs) {
@@ -424,6 +424,7 @@ public class Workflows {
         return WorkflowExecution.fromStatusResponse(executionId, body);
     }
 
+    /** Invoke an exact published snapshot and wait; terminal non-success PARTIAL throws with the current execution. */
     public WorkflowExecution invokeVersionAndWait(String workflowId, int version, Map<String, Object> inputs) {
         return invokeVersionAndWait(workflowId, version, inputs, 300000, 2000, false, null);
     }
@@ -475,6 +476,9 @@ public class Workflows {
                         "Execution " + executionId + " is waiting for input (" + status + where + ")",
                         executionId, status, waiting, execution);
                 }
+                case PARTIAL:
+                    throw new WorkflowExecutionException(
+                        "Execution " + executionId + " completed partially", executionId, status, execution);
                 case FAILED:
                     throw new WorkflowExecutionException(
                         "Execution " + executionId + " " + status.toLowerCase(java.util.Locale.ROOT)
@@ -575,7 +579,7 @@ public class Workflows {
      * @param timeoutMs timeout in milliseconds
      * @param pollIntervalMs poll interval in milliseconds
      * @return the completed execution
-     * @throws WorkflowExecutionException if the execution fails or is cancelled
+     * @throws WorkflowExecutionException if the execution ends partially, fails or is cancelled
      * @throws WorkflowTimeoutException if it does not finish within {@code timeoutMs}
      */
     public WorkflowExecution waitForCompletion(String executionId, long timeoutMs, long pollIntervalMs) {
