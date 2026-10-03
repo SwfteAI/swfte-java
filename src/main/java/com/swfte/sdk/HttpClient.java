@@ -443,12 +443,12 @@ public class HttpClient {
                 }
                 
                 int responseCode = conn.getResponseCode();
-                
+                // Redirects are never followed (credentials and body must not leave the configured host): a 3xx is a refusal.
                 if (responseCode == 401) {
                     throw new AuthenticationException("Invalid API key");
                 } else if (responseCode == 429) {
                     throw new RateLimitException("Rate limit exceeded");
-                } else if (responseCode >= 400) {
+                } else if (responseCode < 200 || responseCode >= 300) {
                     String errorBody = readErrorStream(conn);
                     throw new ApiException("API error: " + responseCode + " - " + errorBody, responseCode);
                 }
