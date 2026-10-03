@@ -435,10 +435,11 @@ All contributors must sign the [Swfte CLA](https://cla.swfte.com) before their f
   A POST with a null body uses zero-length streaming for the same protection.
   File uploads use `apiBaseUrl`; audio uploads use the gateway `baseUrl`.
 - **Timeouts.** Every request has connect and read timeouts (`timeout`, 60000 ms by default).
-- **Redirects.** POST requests use streaming mode and refuse automatic redirects,
-  including 302 and 307, so request bodies are never forwarded to another origin.
-  Configure the final endpoint URL. Other methods retain `HttpURLConnection`
-  redirect behavior.
+- **Redirects.** No request follows a redirect, for any method (GET, DELETE, PUT,
+  PATCH and POST alike). Every 3xx response is an `ApiException` carrying that
+  status code and is never retried, so the bearer key, workspace header and
+  request bodies are never forwarded to another origin. Configure the final
+  endpoint URL.
 
 To report a vulnerability, please see [SECURITY.md](SECURITY.md). Do not open a public issue for security concerns.
 

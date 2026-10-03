@@ -25,6 +25,11 @@ published; 1.2.0 supersedes them.
   own, outside the SDK retry loop. Null-body POSTs use zero-length streaming;
   these POST paths refuse automatic redirects. `maxRetries(0)` now makes one attempt instead
   of failing without sending.
+- **No request follows a redirect.** GET, DELETE and the other methods used to inherit
+  `HttpURLConnection`'s automatic redirect following, which could replay the workspace
+  header (and `Authorization` on a same-origin hop) at the redirect target. Every connection
+  now disables redirects and any 3xx is an `ApiException` (not retried), matching the Node
+  and Python SDKs.
 - Release workflow: actions pinned to full commit SHAs, GitHub Release step moved into its own
   job (away from the GPG key and Central token), publish only from `main`, the "already on
   Central" check reads repo1.maven.org (fail closed) instead of the lagging search index.

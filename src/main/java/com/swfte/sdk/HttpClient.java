@@ -106,6 +106,8 @@ public class HttpClient {
      *       {@link ApiException}.</li>
      *   <li>Bodies are sent in fixed-length streaming mode so {@link HttpURLConnection}
      *       cannot transparently re-send a POST on its own.</li>
+     *   <li>Redirects are never followed, for any method: every 3xx is an
+     *       {@link ApiException} (not retried), so the bearer key never reaches another host.</li>
      * </ul>
      */
     private <T> T execute(String url, String method, String path, Object body, Class<T> responseType,
@@ -197,6 +199,13 @@ public class HttpClient {
 
     /** Map a non-2xx response to its typed exception. Reads the error body. */
     private SwfteException errorFor(HttpURLConnection conn, int code, String method, String path) {
+        if (code >= 300 && code < 400) {
+            // Same refusal as swfte-node. The Location is deliberately not echoed or followed.
+            String message = redactor.text("Refusing to follow a redirect (" + code + ") for " + method + " " + path
+                + ": the API never redirects, and following would send your credentials elsewhere. "
+                + "Check baseUrl/apiBaseUrl.");
+            return new ApiException(message, code, "");
+        }
         String errorBody = redactor.text(readErrorStream(conn));
         String message = redactor.text("API error: " + code + " " + method + " " + path
             + (errorBody.isEmpty() ? "" : " - " + errorBody));
@@ -243,7 +252,7 @@ public class HttpClient {
             
             int responseCode = conn.getResponseCode();
             
-            if (responseCode >= 400) {
+            if (responseCode < 200 || responseCode >= 300) {
                 throw errorFor(conn, responseCode, "POST", path);
             }
             
@@ -328,7 +337,7 @@ public class HttpClient {
         String boundary = "----SwfteBoundary" + System.currentTimeMillis();
         HttpURLConnection conn = null;
         try {
-            conn = connections.open(url);
+            conn = open(url);
             conn.setRequestMethod("POST");
             conn.setDoOutput(true);
             conn.setConnectTimeout(client.getTimeout());
@@ -363,7 +372,7 @@ public class HttpClient {
             
             int responseCode = conn.getResponseCode();
             
-            if (responseCode >= 400) {
+            if (responseCode < 200 || responseCode >= 300) {
                 throw errorFor(conn, responseCode, "POST", path);
             }
             
@@ -396,7 +405,7 @@ public class HttpClient {
             
             int responseCode = conn.getResponseCode();
             
-            if (responseCode >= 400) {
+            if (responseCode < 200 || responseCode >= 300) {
                 throw errorFor(conn, responseCode, "POST", path);
             }
             
@@ -409,8 +418,19 @@ public class HttpClient {
         }
     }
     
-    private HttpURLConnection createConnection(String url, String method) throws IOException {
+    /**
+     * Open a connection that never follows a redirect. Every request carries the
+     * bearer key and workspace header; following a 3xx would replay them at
+     * whatever Location the server (or a spoofed hop) names.
+     */
+    private HttpURLConnection open(String url) throws IOException {
         HttpURLConnection conn = connections.open(url);
+        conn.setInstanceFollowRedirects(false);
+        return conn;
+    }
+
+    private HttpURLConnection createConnection(String url, String method) throws IOException {
+        HttpURLConnection conn = open(url);
         // HttpURLConnection doesn't natively support PATCH; use POST with X-HTTP-Method-Override
         if ("PATCH".equals(method)) {
             conn.setRequestMethod("POST");
