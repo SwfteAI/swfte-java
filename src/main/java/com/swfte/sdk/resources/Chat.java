@@ -49,6 +49,9 @@ public class Chat {
         
         /**
          * Create a streaming chat completion.
+         * Close the stream with try-with-resources, especially when stopping early.
+         * Consuming a stream whose response ends before {@code [DONE]} throws a
+         * {@link com.swfte.sdk.exceptions.SwfteException}.
          *
          * @param request the chat request (stream should be true)
          * @return stream of chat chunks

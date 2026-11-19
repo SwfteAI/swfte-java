@@ -1,6 +1,7 @@
 package com.swfte.sdk;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sun.net.httpserver.HttpServer;
 import com.swfte.sdk.exceptions.ApiException;
 import com.swfte.sdk.exceptions.AuthenticationException;
 import com.swfte.sdk.exceptions.RateLimitException;
@@ -22,6 +23,7 @@ import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.net.HttpURLConnection;
+import java.net.InetSocketAddress;
 import java.net.SocketTimeoutException;
 import java.net.URL;
 import java.net.URLEncoder;
@@ -30,6 +32,8 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -102,7 +106,7 @@ class CredentialPrivacyTest {
             assertEquals(1, server.recorded().size());
         }
         StubConnection rate = new StubConnection(429, new ByteArrayInputStream(new byte[0]), json(echo(KEY)));
-        RateLimitException error = assertThrows(RateLimitException.class, () -> new HttpClient(client("http://fixture.test", KEY), ignored -> rate)
+        RateLimitException error = assertThrows(RateLimitException.class, () -> new HttpClient(client("https://fixture.test", KEY), ignored -> rate)
             .apiRequest("POST", "/fixture", Map.of(), Map.class));
         assertEquals(Long.valueOf(7), error.getRetryAfterSeconds());
         assertPrivate(error, KEY);
@@ -128,7 +132,7 @@ class CredentialPrivacyTest {
         IOException source = new SocketTimeoutException("network detail " + KEY);
         source.initCause(new IOException("cause detail " + URLEncoder.encode(KEY, StandardCharsets.UTF_8)));
         AtomicInteger calls = new AtomicInteger();
-        HttpClient broken = new HttpClient(client("http://fixture.test", KEY), ignored -> { calls.incrementAndGet(); throw source; });
+        HttpClient broken = new HttpClient(client("https://fixture.test", KEY), ignored -> { calls.incrementAndGet(); throw source; });
         SwfteException failure = assertThrows(SwfteException.class, () -> broken.apiRequest("POST", "/fixture", Map.of(), Map.class));
         assertInstanceOf(SocketTimeoutException.class, failure.getCause());
         assertNotSame(source, failure.getCause());
@@ -151,7 +155,7 @@ class CredentialPrivacyTest {
     @Test
     void serializationFailureIsPrivateAndMakesNoConnection() throws Exception {
         AtomicInteger calls = new AtomicInteger();
-        HttpClient http = new HttpClient(client("http://fixture.test", KEY), ignored -> { calls.incrementAndGet(); throw new IOException("should not connect"); });
+        HttpClient http = new HttpClient(client("https://fixture.test", KEY), ignored -> { calls.incrementAndGet(); throw new IOException("should not connect"); });
         SwfteException error = assertThrows(SwfteException.class, () -> http.post("/fixture", new FailingRequest(), Map.class));
         assertTrue(error.getCause().getMessage().contains("serialization detail"));
         assertEquals(0, calls.get());
@@ -172,7 +176,7 @@ class CredentialPrivacyTest {
             @Override public void close() { closes.incrementAndGet(); }
         };
         StubConnection conn = new StubConnection(200, input, "");
-        try (Stream<String> stream = new HttpClient(client("http://fixture.test", KEY), ignored -> conn).postStream("/fixture", Map.of())) {
+        try (Stream<String> stream = new HttpClient(client("https://fixture.test", KEY), ignored -> conn).postStream("/fixture", Map.of())) {
             Iterator<String> frames = stream.iterator();
             assertEquals(frame, frames.next());
             SwfteException error = assertThrows(SwfteException.class, frames::hasNext);
@@ -190,11 +194,79 @@ class CredentialPrivacyTest {
             @Override public void close() throws IOException { throw new IOException("close detail " + KEY); }
         };
         StubConnection conn = new StubConnection(200, input, "");
-        Stream<String> stream = new HttpClient(client("http://fixture.test", KEY), ignored -> conn).postStream("/fixture", Map.of());
+        Stream<String> stream = new HttpClient(client("https://fixture.test", KEY), ignored -> conn).postStream("/fixture", Map.of());
         SwfteException error = assertThrows(SwfteException.class, stream::close);
         assertTrue(error.getCause().getMessage().contains("close detail"));
         assertPrivate(error, KEY);
         assertTrue(conn.disconnected);
+    }
+
+    @Test
+    void cleanEofWithoutDoneFailsAfterDeliveringTheAvailableFrame() throws Exception {
+        try (TestServer server = new TestServer("data: {\"id\":\"first\"}\n\n");
+             Stream<String> stream = new HttpClient(client(server.baseUrl(), KEY)).postStream("/fixture", Map.of())) {
+            Iterator<String> frames = stream.iterator();
+            assertEquals("{\"id\":\"first\"}", frames.next());
+            SwfteException error = assertThrows(SwfteException.class, frames::hasNext);
+            assertTrue(error.getMessage().contains("before [DONE]"));
+            assertEquals(1, server.recorded().size());
+        }
+    }
+
+    @Test
+    void closingAfterTheFirstFrameClosesTheBodyWithoutAnotherPost() throws Exception {
+        AtomicInteger closes = new AtomicInteger();
+        InputStream input = new ByteArrayInputStream("data: {}\n\n".getBytes(StandardCharsets.UTF_8)) {
+            @Override public void close() { closes.incrementAndGet(); }
+        };
+        StubConnection conn = new StubConnection(200, input, "");
+        AtomicInteger opens = new AtomicInteger();
+        HttpClient http = new HttpClient(client("https://fixture.test", KEY), ignored -> {
+            opens.incrementAndGet();
+            return conn;
+        });
+        try (Stream<String> stream = http.postStream("/fixture", Map.of())) {
+            assertEquals("{}", stream.findFirst().orElseThrow());
+        }
+        assertEquals(1, closes.get());
+        assertEquals(1, opens.get());
+        assertTrue(conn.disconnected);
+    }
+
+    @Test
+    void stalledBodyHonorsReadTimeoutWithoutAnotherPost() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        AtomicInteger requests = new AtomicInteger();
+        CountDownLatch release = new CountDownLatch(1);
+        server.createContext("/fixture", exchange -> {
+            requests.incrementAndGet();
+            try {
+                exchange.getRequestBody().readAllBytes();
+                exchange.sendResponseHeaders(200, 0);
+                exchange.getResponseBody().write("data: {}\n\n".getBytes(StandardCharsets.UTF_8));
+                exchange.getResponseBody().flush();
+                release.await(10, TimeUnit.SECONDS);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            } finally {
+                exchange.close();
+            }
+        });
+        server.start();
+        try {
+            String base = "http://127.0.0.1:" + server.getAddress().getPort();
+            SwfteClient sdk = SwfteClient.builder().apiKey(KEY).baseUrl(base).apiBaseUrl(base).timeout(1000).build();
+            try (Stream<String> stream = new HttpClient(sdk).postStream("/fixture", Map.of())) {
+                Iterator<String> frames = stream.iterator();
+                assertEquals("{}", frames.next());
+                SwfteException error = assertThrows(SwfteException.class, frames::hasNext);
+                assertInstanceOf(SocketTimeoutException.class, error.getCause());
+                assertEquals(1, requests.get());
+            }
+        } finally {
+            release.countDown();
+            server.stop(0);
+        }
     }
 
     @Test
@@ -314,7 +386,7 @@ class CredentialPrivacyTest {
         private final String error;
         boolean disconnected;
         StubConnection(int status, InputStream input, String error) throws Exception {
-            super(new URL("http://fixture.test"));
+            super(new URL("https://fixture.test"));
             this.status = status; this.input = input; this.error = error;
         }
         @Override public int getResponseCode() { return status; }

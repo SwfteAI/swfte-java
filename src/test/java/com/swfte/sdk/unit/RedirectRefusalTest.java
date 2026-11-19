@@ -159,6 +159,24 @@ class RedirectRefusalTest {
         assertEquals("Bearer " + KEY, source.hits.get(0).headers.getFirst("Authorization"));
     }
 
+    @Test void remoteHttpIsRejectedAtBuildTimeForBothCredentialedBases() {
+        for (String url : List.of("http://remote.example/agents", "http://127.0.0.1.example/agents")) {
+            assertThrows(IllegalArgumentException.class, () -> SwfteClient.builder().apiKey(KEY).baseUrl(url).build());
+            assertThrows(IllegalArgumentException.class, () -> SwfteClient.builder().apiKey(KEY).apiBaseUrl(url).build());
+        }
+        assertThrows(IllegalArgumentException.class, () -> SwfteClient.builder().apiKey(KEY)
+            .baseUrl("https://user@remote.example/agents").build());
+    }
+
+    @Test void customTlsAndLoopbackBasesRemainAvailable() {
+        for (String url : List.of("https://proxy.example/agents", "http://localhost:8080/agents",
+                "http://127.0.0.2:8080/agents", "http://[::1]:8080/agents")) {
+            SwfteClient sdk = SwfteClient.builder().apiKey(KEY).baseUrl(url + "/v2/gateway").apiBaseUrl(url).build();
+            assertEquals(url + "/v2/gateway", sdk.getBaseUrl());
+            assertEquals(url, sdk.getApiBaseUrl());
+        }
+    }
+
     /**
      * Positive control for the harness itself: a stock HttpURLConnection that does follow
      * redirects reaches the sink and replays custom headers (the JDK drops Authorization on

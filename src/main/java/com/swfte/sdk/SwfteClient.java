@@ -25,6 +25,11 @@ import com.swfte.sdk.resources.Secrets;
 import com.swfte.sdk.resources.Conversations;
 import com.swfte.sdk.resources.Catalog;
 
+import java.net.InetAddress;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.UnknownHostException;
+
 /**
  * Swfte API client for accessing AI models through the unified gateway.
  * 
@@ -79,8 +84,8 @@ public class SwfteClient {
 
     private SwfteClient(Builder builder) {
         this.apiKey = builder.apiKey;
-        this.baseUrl = builder.baseUrl;
-        this.apiBaseUrl = builder.resolveApiBaseUrl();
+        this.baseUrl = validateBaseUrl("baseUrl", builder.baseUrl);
+        this.apiBaseUrl = validateBaseUrl("apiBaseUrl", builder.resolveApiBaseUrl());
         this.timeout = builder.timeout;
         this.maxRetries = builder.maxRetries;
         this.workspaceId = builder.workspaceId;
@@ -313,6 +318,34 @@ public class SwfteClient {
     public static String deriveApiBaseUrl(String baseUrl) {
         // Same suffixes the Python SDK strips (BT-N13): /v2/gateway, /v1/gateway, /gateway.
         return baseUrl.replaceAll("/+$", "").replaceAll("/(?:v[12]/)?gateway$", "");
+    }
+
+    private static String validateBaseUrl(String name, String value) {
+        try {
+            URI uri = new URI(value);
+            String host = uri.getHost();
+            String scheme = uri.getScheme();
+            if (host != null && uri.getRawUserInfo() == null && uri.getRawQuery() == null
+                    && uri.getRawFragment() == null && uri.getPort() <= 65535
+                    && ("https".equalsIgnoreCase(scheme) || ("http".equalsIgnoreCase(scheme) && isLoopbackHost(host)))) {
+                return value;
+            }
+        } catch (URISyntaxException ignored) {
+            // The supplied value may contain credentials, so omit it from the error.
+        }
+        throw new IllegalArgumentException(name + " must be an HTTPS URL or a loopback HTTP URL without user info, query, or fragment");
+    }
+
+    private static boolean isLoopbackHost(String host) {
+        if ("localhost".equalsIgnoreCase(host)) return true;
+        if (host.matches("127(?:\\.\\d{1,3}){3}")) return true;
+        // URI#getHost includes brackets around numeric IPv6 addresses.
+        if (!host.startsWith("[")) return false;
+        try {
+            return InetAddress.getByName(host).isLoopbackAddress();
+        } catch (UnknownHostException ignored) {
+            return false;
+        }
     }
 
     public String getWorkspaceId() {
