@@ -91,8 +91,8 @@ class SotInvokeTest {
 
         @Test
         void explicitApiBaseUrlWins() {
-            SwfteClient c = SwfteClient.builder().apiKey("k").apiBaseUrl("http://local:1/").build();
-            assertEquals("http://local:1", c.getApiBaseUrl());
+            SwfteClient c = SwfteClient.builder().apiKey("k").apiBaseUrl("http://localhost:1/").build();
+            assertEquals("http://localhost:1", c.getApiBaseUrl());
         }
     }
 

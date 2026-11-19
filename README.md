@@ -1,6 +1,5 @@
 # Swfte Java SDK
 
-[![Maven Central](https://img.shields.io/maven-central/v/com.swfte/swfte-sdk.svg)](https://search.maven.org/artifact/com.swfte/swfte-sdk)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Java 11+](https://img.shields.io/badge/java-11+-blue.svg)](https://www.oracle.com/java/technologies/downloads/)
 
@@ -26,15 +25,25 @@ Read the full company profile in [ABOUT.md](ABOUT.md), or visit [swfte.com](http
 
 - [swfte-python](https://github.com/SwfteAI/swfte-python) — Python SDK ([PyPI](https://pypi.org/project/swfte-sdk/))
 - [swfte-node](https://github.com/SwfteAI/swfte-node) — Node.js / TypeScript SDK ([npm](https://www.npmjs.com/package/@swfte/sdk))
-- [swfte-java](https://github.com/SwfteAI/swfte-java) — Java SDK ([Maven Central](https://search.maven.org/artifact/com.swfte/swfte-sdk))
-- [swfte-chat-widget](https://github.com/SwfteAI/swfte-chat-widget) — embeddable chat widget ([npm](https://www.npmjs.com/package/@swfte/chat-widget))
-- [swfte-chatflow-widget](https://github.com/SwfteAI/swfte-chatflow-widget) — embeddable conversational form widget ([npm](https://www.npmjs.com/package/@swfte/chatflow-widget))
+- [swfte-java](https://github.com/SwfteAI/swfte-java) — Java SDK (source install)
+- [swfte-chat-widget](https://github.com/SwfteAI/swfte-chat-widget) — embeddable chat widget (source install)
+- [swfte-chatflow-widget](https://github.com/SwfteAI/swfte-chatflow-widget) — embeddable conversational form widget (source install)
 
 ## Documentation
 
 Full API reference and guides are available at [swfte.com/developers](https://www.swfte.com/developers) and [swfte.com/resources](https://www.swfte.com/resources). For task-oriented walkthroughs of the V2 controllers covered by this SDK, see the [cookbook](docs/cookbook/).
 
 ## Installation
+
+`com.swfte:swfte-sdk` is not yet published on Maven Central. Install from [the source repository](https://github.com/SwfteAI/swfte-java) with repository access, JDK 11 or newer, and Maven 3.9 or newer.
+
+```bash
+git clone https://github.com/SwfteAI/swfte-java.git
+cd swfte-java
+mvn -DskipTests -Dmaven.javadoc.skip=true install
+```
+
+The build installs the SDK in your local Maven repository. Use the version in the checked-out `pom.xml`.
 
 ### Maven
 
@@ -49,7 +58,14 @@ Full API reference and guides are available at [swfte.com/developers](https://ww
 ### Gradle
 
 ```groovy
-implementation 'com.swfte:swfte-sdk:1.2.0'
+repositories {
+    mavenLocal()
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'com.swfte:swfte-sdk:1.2.0'
+}
 ```
 
 ## Quick Start
@@ -95,6 +111,8 @@ ChatResponse response = client.chat().completions().create(
 ```
 
 ### Streaming
+
+Consume the stream to `[DONE]` to confirm completion. If the response ends early, the SDK throws `SwfteException`. Use try-with-resources to close the body when you stop reading early.
 
 ```java
 import com.swfte.sdk.models.ChatChunk;
@@ -423,8 +441,8 @@ All contributors must sign the [Swfte CLA](https://cla.swfte.com) before their f
 - **API key handling.** Set the key with `.apiKey(...)` or `SWFTE_API_KEY`; do not commit it.
   It is sent only as an `Authorization: Bearer` header. `SwfteClient` has no `toString`
   that prints it, the SDK does not log, and SDK exception messages do not contain it.
-- **TLS.** The SDK never overrides certificate or hostname verification; use `https://` base URLs
-  (`http://` sends the key in cleartext and is only appropriate for localhost).
+- **TLS.** Both `baseUrl` and `apiBaseUrl` require `https://` for remote endpoints. `http://` is supported for
+  localhost and numeric loopback addresses. Custom HTTPS endpoints use standard certificate and hostname verification.
 - **Retries.** Requests are retried only after a connection failure, timeout or 5xx, and only when
   they are idempotent: GET/HEAD, or a write sent with an `Idempotency-Key`. A 4xx (including
   401/403/429) is never retried, and a POST/PUT/PATCH/DELETE without an idempotency key is sent

@@ -261,10 +261,15 @@ public class HttpClient {
             );
             
             HttpURLConnection streamConnection = conn;
-            Spliterator<String> frames = new Spliterators.AbstractSpliterator<String>(Long.MAX_VALUE, Spliterator.ORDERED) {
+            class StreamFrames extends Spliterators.AbstractSpliterator<String> {
                 private boolean finished;
 
+                StreamFrames() {
+                    super(Long.MAX_VALUE, Spliterator.ORDERED);
+                }
+
                 private void closeReader() {
+                    if (finished) return;
                     finished = true;
                     try {
                         reader.close();
@@ -283,7 +288,9 @@ public class HttpClient {
                         String line;
                         do {
                             line = reader.readLine();
-                            if (line == null) { closeReader(); return false; }
+                            if (line == null) {
+                                throw new SwfteException("Streaming response ended before [DONE]");
+                            }
                         } while (!line.startsWith("data:"));
                         data = line.substring(5).stripLeading();
                         if (data.equals("[DONE]")) { closeReader(); return false; }
@@ -306,12 +313,9 @@ public class HttpClient {
                     action.accept(data); // Successful chunks stay intact; callers own their callbacks.
                     return true;
                 }
-            };
-            Stream<String> stream = StreamSupport.stream(frames, false).onClose(() -> {
-                try { reader.close(); }
-                catch (IOException error) { throw new SwfteException("Streaming reader close failed", redactor.cause(error)); }
-                finally { streamConnection.disconnect(); }
-            });
+            }
+            StreamFrames frames = new StreamFrames();
+            Stream<String> stream = StreamSupport.stream(frames, false).onClose(frames::closeReader);
             handedOff = true;
             return stream;
         } catch (IOException e) {

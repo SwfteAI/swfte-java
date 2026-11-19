@@ -5,10 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.2.0] - 2026-09-30
+## [Unreleased]
 
-First release published to Maven Central. Versions 1.0.x and 1.1.x were never
-published; 1.2.0 supersedes them.
+### Breaking/behaviour changes
+
+- The gateway and agents API bases require HTTPS for remote hosts. HTTP is allowed for loopback development.
+- A streaming response that ends before `[DONE]` throws `SwfteException`. Close streams with try-with-resources when stopping early.
+
+## [1.2.0] - 2026-09-30
 
 ### Security
 
